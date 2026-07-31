@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>OCR</title>
+  <script>
+  (() => {
+    const shouldHide = args => {
+      const text = args.map(String).join(' ');
+      return text.includes('CleanUnusedInitializersAndNodeArgs') || text.includes('Removing initializer') || text.includes('not used by any node and should be removed');
+    };
+    for (const name of ['warn', 'error']) {
+      const original = console[name].bind(console);
+      console[name] = (...args) => { if (!shouldHide(args)) original(...args); };
+    }
+  })();
+  </script>
+</head>
+<body>
+<script type="module" src="./ocr.js"></script>
+</body>
+</html>
