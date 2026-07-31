@@ -36,8 +36,7 @@ jobs:
 
       - name: Assemble application script
         shell: pwsh
-        run: |
-          Get-Content 'web\app.part1.js','web\app.part2.js','web\app.part3.js' | Set-Content 'web\app.js' -Encoding UTF8
+        run: Get-Content 'web\app.part1.js','web\app.part2.js','web\app.part3.js' | Set-Content 'web\app.js' -Encoding UTF8
 
       - name: Download official PaddleOCR ONNX models
         shell: pwsh
@@ -84,15 +83,22 @@ jobs:
           $native = Resolve-Path 'native'
           $out = Join-Path $PWD 'build-native'
           New-Item -ItemType Directory -Force $out | Out-Null
-          $cmd = @"
+          $batch = @"
+          @echo off
           call "$vcvars"
+          if errorlevel 1 exit /b 1
           cd /d "$native"
           rc.exe /nologo /fo "$out\app.res" app.rc
+          if errorlevel 1 exit /b 1
           cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE /I"$include" app.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculator.exe" /LIBPATH:"$lib" WebView2LoaderStatic.lib user32.lib gdi32.lib shell32.lib ole32.lib oleaut32.lib shlwapi.lib dwmapi.lib advapi32.lib version.lib runtimeobject.lib
+          if errorlevel 1 exit /b 1
           mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoCalculator.exe";#1
+          if errorlevel 1 exit /b 1
           "@
-          cmd.exe /d /s /c $cmd
+          Set-Content 'build-native.cmd' $batch -Encoding ASCII
+          cmd.exe /d /c build-native.cmd
           if ($LASTEXITCODE -ne 0) { throw "Native build failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path "$out\WuwaEchoCalculator.exe")) { throw 'Native EXE was not created' }
 
       - name: Assemble portable package
         shell: pwsh
