@@ -1,3 +1,5 @@
+#define UNICODE
+#define _UNICODE
 #define NOMINMAX
 #include <windows.h>
 
@@ -7,4 +9,5 @@ inline int max(int left, LONG right) noexcept {
 }
 }
 
+#define DrawTextW DrawText
 #include "app.cpp"
