@@ -20,6 +20,8 @@ jobs:
       - name: Generate native sources
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           python -m pip install --disable-pip-version-check pillow pyyaml
           python scripts/generate_icon.py
           python scripts/patch_native_ui.py
@@ -28,6 +30,7 @@ jobs:
           python scripts/patch_ocr_engine_main_parity.py
           python scripts/patch_native_runtime_fixes.py
           python scripts/patch_native_export_figma.py
+          python scripts/normalize_native_release_for_v130.py
           python scripts/patch_native_v130_ui.py
           python scripts/patch_native_v130_ocr.py
           python scripts/patch_native_v130_update.py
@@ -40,6 +43,8 @@ jobs:
       - name: Download OCR models
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $models = Join-Path $PWD 'build-models'
           New-Item -ItemType Directory -Force $models | Out-Null
           curl.exe -L --fail --retry 4 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/main/inference.onnx?download=true' -o "$models\det.onnx"
@@ -49,6 +54,7 @@ jobs:
       - name: Compile
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
@@ -85,6 +91,7 @@ jobs:
       - name: Test and package
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           & build-native\ocr_parser_smoke_test.exe
           if ($LASTEXITCODE) { throw 'OCR parser regression failed' }
           & build-native\update_manager_smoke_test.exe
