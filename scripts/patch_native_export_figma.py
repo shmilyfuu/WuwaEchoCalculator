@@ -99,5 +99,16 @@ replace_once(
 if 'DrawIcon(rt,iconStar_.Get(),Rect(x+18,ry+7,11,11));' in text:
     raise RuntimeError('export card still references the HWND icon bitmap')
 
+# The following v1.3.0 patch replaces this method again and expects its compact
+# historical form. Normalize it here so every build entry uses the same chain.
+multiline_open_export = '''    void OpenExport(){
+        modal_=ModalKind::Export;exportTitleInvalid_=false;SetWindowTextW(edit_,L"");
+        InvalidateRect(hwnd_,nullptr,FALSE);UpdateWindow(hwnd_);
+        PositionEditControl();ShowWindow(edit_,SW_SHOW);SetFocus(edit_);
+        RedrawWindow(edit_,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_UPDATENOW);
+    }'''
+compact_open_export = '    void OpenExport(){modal_=ModalKind::Export;exportTitleInvalid_=false;SetWindowTextW(edit_,L"");PositionEditControl();ShowWindow(edit_,SW_SHOW);SetFocus(edit_);InvalidateRect(hwnd_,nullptr,FALSE);}'
+replace_once(multiline_open_export, compact_open_export, 'v1.3.0 export initializer normalization')
+
 TARGET.write_text(text, encoding='utf-8')
 print(f'Generated {TARGET} ({len(text)} chars)')
