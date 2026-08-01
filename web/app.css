@@ -973,6 +973,7 @@ button { color: inherit; }
 }
 
 #exportTitleHint.invalid { color: var(--warning); }
+#exportTitleHint[hidden] { display: none; }
 
 .export-dialog-actions {
   height: 78px;

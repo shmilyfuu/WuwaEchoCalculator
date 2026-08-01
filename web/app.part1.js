@@ -361,7 +361,7 @@ function renderSlots() {
   dom.recordCount.textContent = `${count} / 5`;
   dom.recordedSummary.textContent = `${count} / 5`;
   dom.rawTotal.textContent = String(total);
-  dom.finalAverage.textContent = count === 5 ? (total / 5).toFixed(1) : '—';
+  dom.finalAverage.textContent = (total / 5).toFixed(1);
   dom.exportRecords.disabled = count !== 5;
   dom.exportHint.textContent = count === 5 ? '可导出一张包含五件声骸的 PNG 图片。' : `还需记录 ${5 - count} 件声骸。`;
 }
@@ -421,9 +421,7 @@ function updateExportTitleValidation() {
   const invalid = exportTitleLength(dom.exportTitleInput.value.trim()) > 12;
   dom.exportTitleInput.classList.toggle('invalid', invalid);
   dom.exportTitleHint.classList.toggle('invalid', invalid);
-  dom.exportTitleHint.textContent = invalid
-    ? '标题超过12个字符限制，请重新编辑'
-    : '最多可输入12个字符，超过最大长度限制，请重新编辑';
+  dom.exportTitleHint.hidden = !invalid;
   return !invalid;
 }
 

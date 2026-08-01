@@ -22,22 +22,34 @@ function defaultExportTitle() {
   return `鸣潮声骸计算器${version.startsWith('v') ? version : `v${version}`}`;
 }
 
+function drawExportText(ctx, text, x, top, lineHeight, offsetY = 0) {
+  const metrics = ctx.measureText('声骸记录Ag');
+  const ascent = Number.isFinite(metrics.fontBoundingBoxAscent)
+    ? metrics.fontBoundingBoxAscent
+    : metrics.actualBoundingBoxAscent;
+  const descent = Number.isFinite(metrics.fontBoundingBoxDescent)
+    ? metrics.fontBoundingBoxDescent
+    : metrics.actualBoundingBoxDescent;
+  const baseline = top + (lineHeight - ascent - descent) / 2 + ascent + offsetY;
+  ctx.fillText(text, x, baseline);
+}
+
 function drawExportCard(ctx, record, index, x, y, starIcon) {
   roundedRect(ctx, x, y, 244, 195, 3, 'rgba(255, 255, 255, .03)');
 
   ctx.textAlign = 'left';
   ctx.fillStyle = '#fff';
   ctx.font = '600 16px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-  ctx.fillText('声骸', x + 12, y + 12);
-  ctx.fillText(String(index + 1), x + 49, y + 12);
+  drawExportText(ctx, '声骸', x + 12, y + 12, 22, 1);
+  drawExportText(ctx, String(index + 1), x + 49, y + 12, 22, 1);
 
   const subtotal = formatScore(record.subtotal);
   ctx.textAlign = 'left';
   ctx.fillStyle = '#fff';
-  ctx.fillText('小计', x + 169, y + 12);
+  drawExportText(ctx, '小计', x + 169, y + 12, 22, 1);
   ctx.textAlign = 'right';
   ctx.fillStyle = exportScoreColor(record.subtotal);
-  ctx.fillText(subtotal, x + 232, y + 12);
+  drawExportText(ctx, subtotal, x + 232, y + 12, 22, 1);
 
   record.rows.forEach((row, rowIndex) => {
     const rowY = y + 42 + rowIndex * 29;
@@ -47,12 +59,12 @@ function drawExportCard(ctx, record, index, x, y, starIcon) {
     ctx.textAlign = 'left';
     ctx.fillStyle = '#fff';
     ctx.font = '400 14px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-    ctx.fillText(shortAttribute(row.attribute), x + 33, rowY + 3);
+    drawExportText(ctx, shortAttribute(row.attribute), x + 33, rowY + 3, 20, -1);
 
     ctx.textAlign = 'right';
-    ctx.fillText(row.value, x + 196, rowY + 3);
+    drawExportText(ctx, row.value, x + 196, rowY + 3, 20, -1);
     ctx.fillStyle = exportScoreColor(row.score);
-    ctx.fillText(formatScore(row.score), x + 226, rowY + 3);
+    drawExportText(ctx, formatScore(row.score), x + 226, rowY + 3, 20, -1);
   });
 }
 
@@ -60,13 +72,13 @@ function drawExportMetric(ctx, label, value, caption, x, y) {
   ctx.textAlign = 'center';
   ctx.fillStyle = '#fff';
   ctx.font = '400 16px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-  ctx.fillText(label, x + 40, y);
+  drawExportText(ctx, label, x + 40, y, 22);
   ctx.fillStyle = '#6CCB5F';
   ctx.font = '600 24px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-  ctx.fillText(value, x + 40, y + 30);
+  drawExportText(ctx, value, x + 40, y + 30, 34, -1);
   ctx.fillStyle = 'rgba(255, 255, 255, .60)';
   ctx.font = '400 12px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-  ctx.fillText(caption, x + 40, y + 68);
+  drawExportText(ctx, caption, x + 40, y + 68, 17);
 }
 
 async function exportRecordsImage(customTitle = '') {
@@ -82,18 +94,18 @@ async function exportRecordsImage(customTitle = '') {
   if (!ctx) throw new Error('无法创建导出画布');
 
   const starIcon = await loadCanvasImage(new URL('./assets/icon_Star@2x.png', location.href).href);
-  ctx.textBaseline = 'top';
+  ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = '#202020';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   ctx.textAlign = 'left';
   ctx.fillStyle = '#fff';
   ctx.font = '600 20px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-  ctx.fillText('声骸记录', 40, 40);
+  drawExportText(ctx, '声骸记录', 40, 40, 28, -1);
   ctx.fillStyle = 'rgba(255, 255, 255, .60)';
   ctx.font = '400 14px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-  ctx.fillText('导出时间', 41, 68);
-  ctx.fillText(now.toLocaleString('zh-CN', { hour12: false }), 101, 68);
+  drawExportText(ctx, '导出时间', 41, 68, 20, -1);
+  drawExportText(ctx, now.toLocaleString('zh-CN', { hour12: false }), 101, 68, 20, -1);
 
   const cardPositions = [[40, 100], [292, 100], [40, 307], [292, 307], [40, 514]];
   records.forEach((record, index) => {
@@ -108,7 +120,7 @@ async function exportRecordsImage(customTitle = '') {
   ctx.textAlign = 'right';
   ctx.fillStyle = '#fff';
   ctx.font = '400 16px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-  ctx.fillText(customTitle || defaultExportTitle(), 536, 687);
+  drawExportText(ctx, customTitle || defaultExportTitle(), 536, 687, 22);
 
   const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('导出图片生成失败');
