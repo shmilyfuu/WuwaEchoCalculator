@@ -48,7 +48,7 @@ jobs:
           cd /d "$native"
           rc.exe /nologo /fo "$out\app.res" app.rc
           if errorlevel 1 exit /b 1
-          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE app.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculatorNative.exe" d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc build_entry.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculatorNative.exe" d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib
           if errorlevel 1 exit /b 1
           mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoCalculatorNative.exe";#1
           if errorlevel 1 exit /b 1
