@@ -1,0 +1,10 @@
+node_modules/
+dist-web/
+build-native/
+packages/
+artifact/
+public/models/*.tar
+public/models/stage/
+public/assets/app-icon.png
+native/app.ico
+*.zip

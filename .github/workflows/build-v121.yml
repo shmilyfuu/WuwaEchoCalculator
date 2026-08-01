@@ -1,0 +1,188 @@
+name: Build Windows portable app v1.2.1
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-v121:
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate application icon
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pillow
+          python scripts/generate_icon.py
+
+      - name: Activate v1.2.1 sources
+        shell: pwsh
+        run: |
+          Copy-Item 'web\index.v121.html' 'web\index.html' -Force
+          Copy-Item 'web\app.v121.css' 'web\app.css' -Force
+          Get-Content 'web\app.part1.js','web\app.part2.js','web\app.part3.js' | Set-Content 'web\app.js' -Encoding UTF8
+          Add-Content 'web\app.css' '.compat-status { display: none !important; }' -Encoding UTF8
+          Copy-Item 'native\app.v121.cpp' 'native\app.cpp' -Force
+          Copy-Item 'native\app.v121.rc' 'native\app.rc' -Force
+          Copy-Item 'native\app.v121.manifest' 'native\app.manifest' -Force
+
+      - name: Download official PaddleOCR ONNX models
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $PWD 'public\models\stage'
+          $det = Join-Path $stage 'PP-OCRv5_mobile_det_onnx_infer'
+          $rec = Join-Path $stage 'PP-OCRv5_mobile_rec_onnx_infer'
+          New-Item -ItemType Directory -Force $det, $rec | Out-Null
+          curl.exe -L --fail --retry 4 --retry-delay 3 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/main/inference.onnx?download=true' -o "$det\inference.onnx"
+          curl.exe -L --fail --retry 4 --retry-delay 3 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/main/inference.yml?download=true' -o "$det\inference.yml"
+          curl.exe -L --fail --retry 4 --retry-delay 3 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx?download=true' -o "$rec\inference.onnx"
+          curl.exe -L --fail --retry 4 --retry-delay 3 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml?download=true' -o "$rec\inference.yml"
+          Push-Location $stage
+          tar.exe -cf '..\PP-OCRv5_mobile_det_onnx_infer.tar' 'PP-OCRv5_mobile_det_onnx_infer'
+          tar.exe -cf '..\PP-OCRv5_mobile_rec_onnx_infer.tar' 'PP-OCRv5_mobile_rec_onnx_infer'
+          Pop-Location
+          Remove-Item $stage -Recurse -Force
+
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: |
+          npm config set registry https://registry.npmjs.org
+          npm install --no-audit --no-fund
+
+      - name: Copy ONNX Runtime files with original names
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'node_modules\onnxruntime-web\dist'
+          $target = 'public\assets'
+          New-Item -ItemType Directory -Force $target | Out-Null
+          Get-ChildItem $source -File | Where-Object { $_.Name -like 'ort-wasm*.mjs' -or $_.Name -like 'ort-wasm*.wasm' } | Copy-Item -Destination $target -Force
+          $required = @(
+            "$target\ort-wasm-simd-threaded.jsep.mjs",
+            "$target\ort-wasm-simd-threaded.jsep.wasm"
+          )
+          foreach ($path in $required) { if (-not (Test-Path $path)) { throw "Missing ONNX Runtime file: $path" } }
+
+      - name: Build web application
+        run: npm run build
+
+      - name: Install WebView2 SDK
+        shell: pwsh
+        run: nuget install Microsoft.Web.WebView2 -OutputDirectory packages -ExcludeVersion -NonInteractive
+
+      - name: Compile native WebView2 host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'Visual Studio C++ tools not found' }
+          $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
+          $sdk = Resolve-Path 'packages\Microsoft.Web.WebView2'
+          $include = Join-Path $sdk 'build\native\include'
+          $lib = Join-Path $sdk 'build\native\x64'
+          $native = Resolve-Path 'native'
+          $out = Join-Path $PWD 'build-native'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $batch = @"
+          @echo off
+          call "$vcvars"
+          if errorlevel 1 exit /b 1
+          cd /d "$native"
+          rc.exe /nologo /fo "$out\app.res" app.rc
+          if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE /I"$include" app.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculator.exe" /LIBPATH:"$lib" WebView2LoaderStatic.lib user32.lib gdi32.lib shell32.lib ole32.lib oleaut32.lib shlwapi.lib dwmapi.lib advapi32.lib version.lib runtimeobject.lib
+          if errorlevel 1 exit /b 1
+          mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoCalculator.exe";#1
+          if errorlevel 1 exit /b 1
+          "@
+          Set-Content 'build-native-v121.cmd' $batch -Encoding ASCII
+          cmd.exe /d /c build-native-v121.cmd
+          if ($LASTEXITCODE -ne 0) { throw "Native build failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path "$out\WuwaEchoCalculator.exe")) { throw 'Native EXE was not created' }
+
+      - name: Assemble portable package
+        shell: pwsh
+        run: |
+          $folder = 'artifact\鸣潮声骸计算器_v1.2.1'
+          New-Item -ItemType Directory -Force "$folder\web", "$folder\data" | Out-Null
+          Copy-Item 'dist-web\*' "$folder\web" -Recurse -Force
+          Copy-Item 'dist-web\index.html' "$folder\web\panel.html" -Force
+          Copy-Item 'build-native\WuwaEchoCalculator.exe' "$folder\鸣潮声骸计算器.exe"
+          @'
+          鸣潮声骸计算器 v1.2.1
+
+          1. 完整解压压缩包，保留 web 与 data 目录。
+          2. 双击“鸣潮声骸计算器.exe”。
+          3. 可拖入图片、点击上传或按 Ctrl+V 粘贴截图。
+          4. 全部状态与提醒显示在窗口底部状态栏。
+          5. 识别期间可点击“停止识别”终止当前任务。
+          6. 五件全部记录后，可导出一张 PNG 记录图。
+
+          最终平均分 = 五件声骸小计之和 ÷ 5。
+          截图和识别数据均在本机处理。
+          '@ | Set-Content "$folder\使用说明.txt" -Encoding UTF8
+          @'
+          v1.2.1
+          - 修复 ONNX Runtime 本地模块缺失导致的 OCR 启动失败。
+          - 默认窗口与最小窗口均调整为 1280 × 760。
+          - 状态和提醒集中到窗口底部状态栏。
+          - 压缩主界面、记录卡与操作区间距。
+          - 统一按钮高度、字号和居中方式。
+          '@ | Set-Content "$folder\更新说明.txt" -Encoding UTF8
+          @'
+          版本：1.2.1
+          窗口：WebView2 独立应用
+          计分：五件声骸小计相加 ÷ 5
+          OCR：PP-OCRv5 本地模型
+          最小窗口：1280 × 760
+          '@ | Set-Content "$folder\版本信息.txt" -Encoding UTF8
+
+      - name: Validate package
+        shell: pwsh
+        run: |
+          $folder = 'artifact\鸣潮声骸计算器_v1.2.1'
+          $required = @(
+            "$folder\鸣潮声骸计算器.exe",
+            "$folder\web\panel.html",
+            "$folder\web\ocr-sandbox.html",
+            "$folder\web\models\PP-OCRv5_mobile_det_onnx_infer.tar",
+            "$folder\web\models\PP-OCRv5_mobile_rec_onnx_infer.tar",
+            "$folder\web\assets\ort-wasm-simd-threaded.jsep.mjs",
+            "$folder\web\assets\ort-wasm-simd-threaded.jsep.wasm",
+            "$folder\web\assets\app-icon.png"
+          )
+          foreach ($path in $required) { if (-not (Test-Path $path)) { throw "Missing: $path" } }
+          Get-Item "$folder\鸣潮声骸计算器.exe" | Format-List Name,Length,VersionInfo
+
+      - name: Create ZIP
+        shell: pwsh
+        run: Compress-Archive -Path 'artifact\鸣潮声骸计算器_v1.2.1' -DestinationPath 'artifact\鸣潮声骸计算器_WebView2独立版_v1.2.1.zip' -CompressionLevel Optimal
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wuwa-echo-calculator-v1.2.1
+          path: artifact/鸣潮声骸计算器_WebView2独立版_v1.2.1.zip
+          if-no-files-found: error
+          retention-days: 7
