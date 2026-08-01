@@ -36,7 +36,7 @@ jobs:
 
       - name: Assemble application script
         shell: pwsh
-        run: Get-Content 'web\app.part1.js','web\app.part2.js','web\app.part3.js' | Set-Content 'web\app.js' -Encoding UTF8
+        run: Get-Content 'web\app.part1.js','web\app.part2.js','web\app.part3.js' -Encoding UTF8 | Set-Content 'web\app.js' -Encoding UTF8
 
       - name: Download official PaddleOCR ONNX models
         shell: pwsh
@@ -61,6 +61,20 @@ jobs:
         run: |
           npm config set registry https://registry.npmjs.org
           npm install --no-audit --no-fund
+
+      - name: Copy ONNX Runtime files with original names
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'node_modules\onnxruntime-web\dist'
+          $target = 'public\assets'
+          New-Item -ItemType Directory -Force $target | Out-Null
+          Get-ChildItem $source -File | Where-Object { $_.Name -like 'ort-wasm*.mjs' -or $_.Name -like 'ort-wasm*.wasm' } | Copy-Item -Destination $target -Force
+          $required = @(
+            "$target\ort-wasm-simd-threaded.jsep.mjs",
+            "$target\ort-wasm-simd-threaded.jsep.wasm"
+          )
+          foreach ($path in $required) { if (-not (Test-Path $path)) { throw "Missing ONNX Runtime file: $path" } }
 
       - name: Build web application
         run: npm run build
@@ -103,13 +117,13 @@ jobs:
       - name: Assemble portable package
         shell: pwsh
         run: |
-          $folder = 'artifact\鸣潮声骸计算器_v1.2.0'
+          $folder = 'artifact\鸣潮声骸计算器_v1.2.1'
           New-Item -ItemType Directory -Force "$folder\web", "$folder\data" | Out-Null
           Copy-Item 'dist-web\*' "$folder\web" -Recurse -Force
           Copy-Item 'dist-web\index.html' "$folder\web\panel.html" -Force
           Copy-Item 'build-native\WuwaEchoCalculator.exe' "$folder\鸣潮声骸计算器.exe"
           @'
-          鸣潮声骸计算器 v1.2.0
+          鸣潮声骸计算器 v1.2.1
 
           1. 完整解压压缩包，保留 web 与 data 目录。
           2. 双击“鸣潮声骸计算器.exe”。
@@ -122,7 +136,10 @@ jobs:
           截图和识别数据均在本机处理。
           '@ | Set-Content "$folder\使用说明.txt" -Encoding UTF8
           @'
-          v1.2.0
+          v1.2.1
+          - 客户区域固定为 1188 × 772，保留最小化和关闭按钮。
+          - 主界面、空卡和确认弹窗按设计稿统一布局与配色。
+          - 清空、覆盖和删除记录统一使用二次确认弹窗。
           - 五件声骸卡片固定显示在同一屏。
           - 新增停止识别与记录图导出。
           - 置信度改为绿、黄、红三色圆点。
@@ -130,24 +147,30 @@ jobs:
           - 新增应用图标并调整按钮文字布局。
           '@ | Set-Content "$folder\更新说明.txt" -Encoding UTF8
           @'
-          版本：1.2.0
+          版本：1.2.1
           窗口：WebView2 独立应用
           计分：五件声骸小计相加 ÷ 5
           OCR：PP-OCRv5 本地模型
-          最小窗口：1400 × 860
+          客户区域：1188 × 772（固定尺寸）
           '@ | Set-Content "$folder\版本信息.txt" -Encoding UTF8
 
       - name: Validate package
         shell: pwsh
         run: |
-          $folder = 'artifact\鸣潮声骸计算器_v1.2.0'
+          $folder = 'artifact\鸣潮声骸计算器_v1.2.1'
           $required = @(
             "$folder\鸣潮声骸计算器.exe",
             "$folder\web\panel.html",
             "$folder\web\ocr-sandbox.html",
             "$folder\web\models\PP-OCRv5_mobile_det_onnx_infer.tar",
             "$folder\web\models\PP-OCRv5_mobile_rec_onnx_infer.tar",
-            "$folder\web\assets\app-icon.png"
+            "$folder\web\assets\app-icon.png",
+            "$folder\web\assets\s_normal.png",
+            "$folder\web\assets\s_abnormal.png",
+            "$folder\web\assets\s_manual.png",
+            "$folder\web\assets\icon_Star.png",
+            "$folder\web\assets\ort-wasm-simd-threaded.jsep.mjs",
+            "$folder\web\assets\ort-wasm-simd-threaded.jsep.wasm"
           )
           foreach ($path in $required) { if (-not (Test-Path $path)) { throw "Missing: $path" } }
           if (-not (Get-ChildItem "$folder\web\assets" -Filter '*.wasm' -File)) { throw 'WASM runtime missing' }
@@ -155,12 +178,12 @@ jobs:
 
       - name: Create ZIP
         shell: pwsh
-        run: Compress-Archive -Path 'artifact\鸣潮声骸计算器_v1.2.0' -DestinationPath 'artifact\鸣潮声骸计算器_WebView2独立版_v1.2.0.zip' -CompressionLevel Optimal
+        run: Compress-Archive -Path 'artifact\鸣潮声骸计算器_v1.2.1' -DestinationPath 'artifact\鸣潮声骸计算器_WebView2独立版_v1.2.1.zip' -CompressionLevel Optimal
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wuwa-echo-calculator-v1.2.0
-          path: artifact/鸣潮声骸计算器_WebView2独立版_v1.2.0.zip
+          name: wuwa-echo-calculator-v1.2.1
+          path: artifact/鸣潮声骸计算器_WebView2独立版_v1.2.1.zip
           if-no-files-found: error
           retention-days: 7
