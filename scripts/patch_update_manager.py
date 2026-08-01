@@ -46,6 +46,18 @@ replace_once(
         requestPath.append(components.lpszExtraInfo, components.dwExtraInfoLength);''',
     'URL component parsing',
 )
+replace_once(
+    '    const std::wstring expected = L"WuwaEchoCalculator-v" + info.version + L"-windows-x64.zip";',
+    '''    info.available = NativeUpdateManager::CompareVersions(currentVersion, info.version) < 0;
+    if (!info.available) return true;
+    const std::wstring expected = L"WuwaEchoCalculator-v" + info.version + L"-windows-x64.zip";''',
+    'skip unavailable package lookup',
+)
+replace_once(
+    '    info.available = NativeUpdateManager::CompareVersions(currentVersion, info.version) < 0;\n    return true;',
+    '    return true;',
+    'remove duplicate availability calculation',
+)
 
 TARGET.write_text(text, encoding='utf-8')
 print(f'Generated {TARGET} ({len(text)} chars)')
