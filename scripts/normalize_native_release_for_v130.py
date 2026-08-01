@@ -11,9 +11,13 @@ multiline = '''    void OpenExport(){
     }'''
 normalized = '    void OpenExport(){modal_=ModalKind::Export;exportTitleInvalid_=false;SetWindowTextW(edit_,L"");PositionEditControl();ShowWindow(edit_,SW_SHOW);SetFocus(edit_);InvalidateRect(hwnd_,nullptr,FALSE);}'
 
-count = text.count(multiline)
-if count != 1:
-    raise RuntimeError(f'OpenExport normalization expected one match, found {count}')
-text = text.replace(multiline, normalized, 1)
+multiline_count = text.count(multiline)
+normalized_count = text.count(normalized)
+if multiline_count == 1 and normalized_count == 0:
+    text = text.replace(multiline, normalized, 1)
+elif multiline_count == 0 and normalized_count == 1:
+    pass
+else:
+    raise RuntimeError(f'OpenExport normalization state invalid: multiline={multiline_count}, normalized={normalized_count}')
 PATH.write_text(text, encoding='utf-8')
-print('Normalized native/app_release.cpp for v1.3.0 patching')
+print('Native app_release.cpp is normalized for v1.3.0 patching')
