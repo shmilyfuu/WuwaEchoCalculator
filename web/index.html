@@ -71,7 +71,7 @@
             <h2 id="statsTitle">当前统计</h2>
           </div>
           <div class="stats-grid">
-            <div><span>已记录</span><strong id="recordedSummary">0 / 5</strong></div>
+            <div><span>已记录</span><strong id="recordedSummary">0 / 5</strong><small class="stats-placeholder" aria-hidden="true">占位</small></div>
             <div><span>总分</span><strong id="rawTotal">0</strong><small>5件声骸总分</small></div>
             <div><span>平均分</span><strong id="finalAverage">—</strong><small>5件声骸平均分</small></div>
           </div>
@@ -132,6 +132,20 @@
       <div class="confirm-actions">
         <button id="confirmAccept" class="button primary" type="button">确定</button>
         <button id="confirmCancel" class="button" type="button">取消</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="exportOverlay" class="modal-overlay" hidden>
+    <section class="export-dialog" role="dialog" aria-modal="true" aria-labelledby="exportDialogTitle" aria-describedby="exportTitleHint">
+      <div class="export-dialog-copy">
+        <h2 id="exportDialogTitle">导出记录</h2>
+        <input id="exportTitleInput" type="text" autocomplete="off" placeholder="请输入标题（可选）" aria-describedby="exportTitleHint" />
+        <p id="exportTitleHint">最多可输入12个字符，超过最大长度限制，请重新编辑</p>
+      </div>
+      <div class="export-dialog-actions">
+        <button id="exportAccept" class="button primary" type="button">确定</button>
+        <button id="exportCancel" class="button" type="button">取消</button>
       </div>
     </section>
   </div>

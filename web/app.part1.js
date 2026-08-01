@@ -14,7 +14,8 @@ const dom = Object.fromEntries([
   'rowsContainer', 'rawText', 'slotSelect', 'confirmRecord', 'recordHint', 'recordCount',
   'slotsList', 'rawTotal', 'finalAverage', 'recordedSummary', 'clearAll', 'exportRecords',
   'exportHint', 'statusDot', 'appStatus', 'runtimeInfo', 'confirmOverlay', 'confirmTitle',
-  'confirmMessage', 'confirmAccept', 'confirmCancel', 'ocrFrame'
+  'confirmMessage', 'confirmAccept', 'confirmCancel', 'exportOverlay', 'exportTitleInput',
+  'exportTitleHint', 'exportAccept', 'exportCancel', 'ocrFrame'
 ].map(id => [id, document.getElementById(id)]));
 
 const state = {
@@ -38,6 +39,8 @@ const state = {
 
 let activeConfirmation = null;
 let confirmationFocus = null;
+let activeExportDialog = null;
+let exportDialogFocus = null;
 
 function blankRows() {
   return Array.from({ length: 5 }, () => ({
@@ -311,8 +314,13 @@ function renderSlots() {
     const title = document.createElement('strong');
     title.textContent = `声骸 ${slot}`;
     const subtotalEl = document.createElement('span');
-    subtotalEl.className = `slot-subtotal${record.subtotal > 0 ? ' positive' : record.subtotal < 0 ? ' negative' : ' zero'}`;
-    subtotalEl.textContent = `小计 ${formatScore(record.subtotal)}`;
+    subtotalEl.className = 'slot-subtotal';
+    const subtotalLabel = document.createElement('span');
+    subtotalLabel.textContent = '小计';
+    const subtotalScore = document.createElement('span');
+    subtotalScore.className = `slot-subtotal-score${record.subtotal > 0 ? ' positive' : record.subtotal < 0 ? ' negative' : ' zero'}`;
+    subtotalScore.textContent = formatScore(record.subtotal);
+    subtotalEl.append(subtotalLabel, subtotalScore);
     head.append(title, subtotalEl);
 
     const table = document.createElement('div');
@@ -401,6 +409,79 @@ function setupConfirmDialog() {
     if (event.key === 'Escape') closeConfirmDialog(false);
     if (event.key === 'Enter' && document.activeElement !== dom.confirmCancel) closeConfirmDialog(true);
   });
+}
+
+function exportTitleLength(value) {
+  return Array.from(value).reduce((length, character) => (
+    length + (/\p{Script=Han}/u.test(character) ? 1 : .5)
+  ), 0);
+}
+
+function updateExportTitleValidation() {
+  const invalid = exportTitleLength(dom.exportTitleInput.value.trim()) > 12;
+  dom.exportTitleInput.classList.toggle('invalid', invalid);
+  dom.exportTitleHint.classList.toggle('invalid', invalid);
+  dom.exportTitleHint.textContent = invalid
+    ? '标题超过12个字符限制，请重新编辑'
+    : '最多可输入12个字符，超过最大长度限制，请重新编辑';
+  return !invalid;
+}
+
+function closeExportDialog(title = null) {
+  if (!activeExportDialog) return;
+  const resolve = activeExportDialog;
+  activeExportDialog = null;
+  dom.exportOverlay.hidden = true;
+  resolve(title);
+  if (exportDialogFocus instanceof HTMLElement) exportDialogFocus.focus();
+  exportDialogFocus = null;
+}
+
+function submitExportDialog() {
+  if (!updateExportTitleValidation()) {
+    dom.exportTitleInput.focus();
+    return;
+  }
+  closeExportDialog(dom.exportTitleInput.value.trim());
+}
+
+function showExportTitleDialog() {
+  if (activeExportDialog) closeExportDialog(null);
+  exportDialogFocus = document.activeElement;
+  dom.exportTitleInput.value = '';
+  updateExportTitleValidation();
+  dom.exportOverlay.hidden = false;
+  window.setTimeout(() => dom.exportTitleInput.focus(), 0);
+  return new Promise(resolve => { activeExportDialog = resolve; });
+}
+
+function setupExportDialog() {
+  dom.exportTitleInput.addEventListener('input', updateExportTitleValidation);
+  dom.exportAccept.addEventListener('click', submitExportDialog);
+  dom.exportCancel.addEventListener('click', () => closeExportDialog(null));
+  dom.exportOverlay.addEventListener('click', event => {
+    if (event.target === dom.exportOverlay) closeExportDialog(null);
+  });
+  document.addEventListener('keydown', event => {
+    if (!activeExportDialog) return;
+    if (event.key === 'Escape') closeExportDialog(null);
+    if (event.key === 'Enter' && document.activeElement !== dom.exportCancel) {
+      event.preventDefault();
+      submitExportDialog();
+    }
+  });
+}
+
+async function requestExportRecords() {
+  if ([1, 2, 3, 4, 5].some(slot => !state.slots[slot])) return;
+  const title = await showExportTitleDialog();
+  if (title === null) return;
+  try {
+    await exportRecordsImage(title);
+    setStatus('记录图片已导出', 'success');
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : String(error), 'error');
+  }
 }
 
 async function deleteSlot(slot) {
