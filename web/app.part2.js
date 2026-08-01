@@ -28,20 +28,21 @@ function drawExportCard(ctx, record, index, x, y, starIcon) {
   ctx.textAlign = 'left';
   ctx.fillStyle = '#fff';
   ctx.font = '600 16px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-  ctx.fillText(`声骸 ${index + 1}`, x + 12, y + 12);
+  ctx.fillText('声骸', x + 12, y + 12);
+  ctx.fillText(String(index + 1), x + 49, y + 12);
 
   const subtotal = formatScore(record.subtotal);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('小计', x + 169, y + 12);
   ctx.textAlign = 'right';
   ctx.fillStyle = exportScoreColor(record.subtotal);
   ctx.fillText(subtotal, x + 232, y + 12);
-  const subtotalWidth = ctx.measureText(subtotal).width;
-  ctx.fillStyle = '#fff';
-  ctx.fillText('小计', x + 232 - subtotalWidth - 8, y + 12);
 
   record.rows.forEach((row, rowIndex) => {
-    const rowY = y + 42 + rowIndex * 27;
+    const rowY = y + 42 + rowIndex * 29;
     roundedRect(ctx, x + 12, rowY, 220, 25, 1, 'rgba(255, 255, 255, .06)');
-    ctx.drawImage(starIcon, x + 18, rowY + 7, 11, 11);
+    ctx.drawImage(starIcon, x + 18, rowY + (rowIndex === 0 ? 7 : 8), 11, 11);
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#fff';
@@ -51,7 +52,7 @@ function drawExportCard(ctx, record, index, x, y, starIcon) {
     ctx.textAlign = 'right';
     ctx.fillText(row.value, x + 196, rowY + 3);
     ctx.fillStyle = exportScoreColor(row.score);
-    ctx.fillText(formatScore(row.score), x + 232, rowY + 3);
+    ctx.fillText(formatScore(row.score), x + 226, rowY + 3);
   });
 }
 
@@ -75,8 +76,8 @@ async function exportRecordsImage(customTitle = '') {
   const now = new Date();
   const total = records.reduce((sum, record) => sum + Number(record.subtotal || 0), 0);
   const canvas = document.createElement('canvas');
-  canvas.width = 540;
-  canvas.height = 717;
+  canvas.width = 576;
+  canvas.height = 749;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('无法创建导出画布');
 
@@ -88,25 +89,26 @@ async function exportRecordsImage(customTitle = '') {
   ctx.textAlign = 'left';
   ctx.fillStyle = '#fff';
   ctx.font = '600 20px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-  ctx.fillText('声骸记录', 24, 24);
+  ctx.fillText('声骸记录', 40, 40);
   ctx.fillStyle = 'rgba(255, 255, 255, .60)';
   ctx.font = '400 14px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-  ctx.fillText(`导出时间 ${now.toLocaleString('zh-CN', { hour12: false })}`, 24, 52);
+  ctx.fillText('导出时间', 41, 68);
+  ctx.fillText(now.toLocaleString('zh-CN', { hour12: false }), 101, 68);
 
-  const cardPositions = [[24, 84], [276, 84], [24, 291], [276, 291], [24, 498]];
+  const cardPositions = [[40, 100], [292, 100], [40, 307], [292, 307], [40, 514]];
   records.forEach((record, index) => {
     const [x, y] = cardPositions[index];
     drawExportCard(ctx, record, index, x, y, starIcon);
   });
 
-  roundedRect(ctx, 276, 498, 244, 155, 3, 'rgba(255, 255, 255, .03)');
-  drawExportMetric(ctx, '总分', String(total), '5件声骸总分', 304, 533);
-  drawExportMetric(ctx, '平均分', (total / 5).toFixed(1), '5件声骸平均分', 412, 533);
+  roundedRect(ctx, 292, 514, 244, 155, 3, 'rgba(255, 255, 255, .03)');
+  drawExportMetric(ctx, '总分', String(total), '5件声骸总分', 320, 549);
+  drawExportMetric(ctx, '平均分', (total / 5).toFixed(1), '5件声骸平均分', 428, 549);
 
   ctx.textAlign = 'right';
   ctx.fillStyle = '#fff';
-  ctx.font = '400 20px "Microsoft YaHei UI", "Segoe UI", sans-serif';
-  ctx.fillText(customTitle || defaultExportTitle(), 520, 665);
+  ctx.font = '400 16px "Microsoft YaHei UI", "Segoe UI", sans-serif';
+  ctx.fillText(customTitle || defaultExportTitle(), 536, 687);
 
   const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('导出图片生成失败');
@@ -122,6 +124,14 @@ async function preprocessImage(file){const bitmap=await createImageBitmap(file),
 function ocrConfig(){return{detModelUrl:new URL('./models/PP-OCRv5_mobile_det_onnx_infer.tar',location.href).href,recModelUrl:new URL('./models/PP-OCRv5_mobile_rec_onnx_infer.tar',location.href).href,wasmBaseUrl:new URL('./assets/',location.href).href}}
 function postOcr(message,transfers=[]){dom.ocrFrame.contentWindow?.postMessage(message,'*',transfers)}
 function updateRecognitionButtons(){const busy=state.initializingOcr||state.pendingRun||state.recognizing;dom.stopRecognition.disabled=!busy;dom.recognizeAgain.disabled=!state.imageFile||busy;dom.recognizeTop.disabled=!state.imageFile||busy}
+
+function fitPreviewImage(width, height) {
+  if (!(width > 0) || !(height > 0)) return;
+  const scale = Math.min(1, 320 / width, 220 / height);
+  dom.previewImage.style.width = `${width * scale}px`;
+  dom.previewImage.style.height = `${height * scale}px`;
+}
+
 async function acceptImage(file, name = file?.name || '剪贴板图片') {
   if (!file || !file.type.startsWith('image/')) {
     setRecognitionState('请选择图片', 'error');
@@ -133,6 +143,7 @@ async function acceptImage(file, name = file?.name || '剪贴板图片') {
   state.imageFile = file;
   state.imageUrl = URL.createObjectURL(file);
   state.imageName = name;
+  dom.previewImage.style.visibility = 'hidden';
   dom.previewImage.src = state.imageUrl;
   dom.previewWrap.classList.remove('empty');
 
@@ -141,10 +152,20 @@ async function acceptImage(file, name = file?.name || '剪贴板图片') {
     state.imageWidth = bitmap.width;
     state.imageHeight = bitmap.height;
     bitmap.close();
+    fitPreviewImage(state.imageWidth, state.imageHeight);
     dom.imageMeta.textContent = `${name} · ${state.imageWidth} × ${state.imageHeight}`;
   } catch {
-    dom.imageMeta.textContent = name;
+    try {
+      await dom.previewImage.decode();
+      state.imageWidth = dom.previewImage.naturalWidth;
+      state.imageHeight = dom.previewImage.naturalHeight;
+      fitPreviewImage(state.imageWidth, state.imageHeight);
+      dom.imageMeta.textContent = `${name} · ${state.imageWidth} × ${state.imageHeight}`;
+    } catch {
+      dom.imageMeta.textContent = name;
+    }
   }
+  dom.previewImage.style.visibility = 'visible';
 
   updateRecognitionButtons();
   await runRecognition();
