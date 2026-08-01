@@ -30,6 +30,10 @@ jobs:
           python -m pip install --disable-pip-version-check pillow
           python scripts/generate_icon.py
 
+      - name: Generate corrected native source
+        shell: pwsh
+        run: python scripts/patch_native_ui.py
+
       - name: Compile native Direct2D application
         shell: pwsh
         run: |
@@ -67,21 +71,21 @@ jobs:
           @'
           鸣潮声骸计算器 Direct2D 原生迁移预览
 
-          已完成：
-          - WebView2 客户区替换为 Win32 + Direct2D + DirectWrite。
-          - 固定 1188 × 772 布局。
+          本次修正：
+          - 使用正式版下拉箭头、词条星形和识别状态图标。
+          - 校正当前统计文字、数值和按钮的位置。
+          - 修正置顶开关显示位置与点击区域。
+          - 弹窗上下区域改为无重叠拼接，确认按钮统一使用蓝色。
+          - 导出标题输入框改为深色真实输入层叠加 Direct2D 外观。
+          - 恢复“请输入标题（可选）”占位提示，长度提示常驻显示。
+
+          已有功能：
           - 图片点击导入、文件拖入、Ctrl+V 粘贴。
           - 手动选择属性和档位、计分、记录、编辑、删除、清空。
           - 五件声骸全部记录后启用“导出记录”。
-          - 导出标题使用 Direct2D 假输入框叠加透明 Win32 EDIT。
           - PNG 记录图由 WIC 与 Direct2D 原生生成。
-          - 按钮保持普通箭头光标，并加入 hover、按下颜色和 1px 下压反馈。
 
-          暂未完成：
-          - PP-OCRv5 原生 ONNX Runtime 推理与识别结果解析。
-          - 记录和设置的本地持久化。
-          - 最终逐像素视觉校准与完整键盘操作。
-
+          当前 OCR 原生推理仍在接入阶段。
           这是迁移验证包，请勿替换正式版。
           '@ | Set-Content "$folder\原生迁移说明.txt" -Encoding UTF8
           Compress-Archive -Path $folder -DestinationPath 'artifact\鸣潮声骸计算器_Direct2D原生预览.zip' -CompressionLevel Optimal
