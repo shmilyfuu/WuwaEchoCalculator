@@ -32,9 +32,11 @@ jobs:
           python scripts/patch_native_ui.py
           python scripts/patch_native_ocr.py
           python scripts/patch_ocr_engine.py
+          python scripts/patch_ocr_engine_main_parity.py
           python scripts/patch_native_runtime_fixes.py
           python scripts/patch_native_export_figma.py
           python scripts/patch_native_v130_ui.py
+          python scripts/patch_native_v130_ocr.py
           python scripts/generate_ocr_smoke_image.py
 
       - name: Install ONNX Runtime SDK
@@ -73,11 +75,13 @@ jobs:
           cd /d "$native"
           rc.exe /nologo /fo "$out\app.res" app.rc
           if errorlevel 1 exit /b 1
-          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" build_entry.cpp ocr_build_entry.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculatorNative.exe" /LIBPATH:"$ortNative" onnxruntime.lib d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" build_entry.cpp ocr_build_entry.cpp ocr_parser.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculatorNative.exe" /LIBPATH:"$ortNative" onnxruntime.lib d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib
           if errorlevel 1 exit /b 1
           mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoCalculatorNative.exe";#1
           if errorlevel 1 exit /b 1
           cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" ocr_smoke_test.cpp ocr_build_entry.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\ocr_smoke_test.exe" /LIBPATH:"$ortNative" onnxruntime.lib windowscodecs.lib ole32.lib user32.lib gdi32.lib uuid.lib
+          if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc ocr_parser_smoke_test.cpp ocr_parser.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\ocr_parser_smoke_test.exe"
           if errorlevel 1 exit /b 1
           cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc png_export_smoke_test.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\png_export_smoke_test.exe" d2d1.lib windowscodecs.lib ole32.lib user32.lib gdi32.lib uuid.lib
           if errorlevel 1 exit /b 1
@@ -87,6 +91,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Native build failed with exit code $LASTEXITCODE" }
           if (-not (Test-Path "$out\WuwaEchoCalculatorNative.exe")) { throw 'Native EXE was not created' }
           Copy-Item "$ortNative\*.dll" $out -Force
+
+      - name: Run OCR parser regression test
+        shell: pwsh
+        run: |
+          & 'build-native\ocr_parser_smoke_test.exe'
+          if ($LASTEXITCODE -ne 0) { throw "OCR parser smoke test failed with exit code $LASTEXITCODE" }
 
       - name: Run PP-OCRv5 smoke test
         shell: pwsh
@@ -104,10 +114,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "PNG export smoke test failed with exit code $LASTEXITCODE" }
           if (-not (Test-Path $output)) { throw 'PNG smoke output was not created' }
           if ((Get-Item $output).Length -lt 1024) { throw 'PNG smoke output is unexpectedly small' }
-          if (-not (Test-Path 'native\app_v130_ui.cpp')) { throw 'v1.3.0 generated source missing' }
-          $generated = Get-Content 'native\app_v130_ui.cpp' -Raw
+          if (-not (Test-Path 'native\app_v130_ocr.cpp')) { throw 'v1.3.0 generated source missing' }
+          $generated = Get-Content 'native\app_v130_ocr.cpp' -Raw
           if ($generated.Contains('L"v1.3.0-native"')) { throw 'Preview version suffix remains in generated source' }
           if (-not $generated.Contains('CreateEmbeddedBitmap(rt.Get(),EmbeddedIcons::kStar)')) { throw 'Export star bitmap is not target-local' }
+          if (-not $generated.Contains('SelectMainCompatibleOcrRows')) { throw 'Main-compatible OCR parser is not connected' }
 
       - name: Assemble preview package
         shell: pwsh
@@ -122,6 +133,7 @@ jobs:
 
           - 使用 Win32、Direct2D、DirectWrite、WIC 与 ONNX Runtime。
           - 主界面与导出图片按最新设计稿坐标校准。
+          - OCR 图片预处理、属性匹配、严格档位误差和五行选择规则向 main 对齐。
           - 记录成功后自动选择下一个空声骸位置。
           - 导出标题输入框仅在获得焦点时显示底部高亮条。
           - 当前包仍属于迁移分支测试产物。
