@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>鸣潮声骸计算器</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <img src="./assets/app-icon.png" alt="" />
+        <div class="brand-copy">
+          <h1>鸣潮声骸计算器</h1>
+          <p>本地 PaddleOCR · 五件声骸平均分</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span class="local-badge"><i id="topModelDot" class="model-dot loading"></i>本地 PaddleOCR</span>
+        <label class="switch-row" title="让窗口显示在其他窗口上方">
+          <span>置顶</span>
+          <input id="topmostToggle" type="checkbox" />
+          <span class="switch"></span>
+        </label>
+        <span class="version-label">v1.2.1</span>
+      </div>
+    </header>
+
+    <main class="main-grid">
+      <section class="panel import-panel">
+        <div class="panel-heading">
+          <div>
+            <span class="step">1</span>
+            <div><h2>导入声骸截图</h2><p>拖拽、点击上传，或按 Ctrl+V 粘贴</p></div>
+          </div>
+        </div>
+
+        <button id="dropZone" class="drop-zone" type="button">
+          <span class="drop-symbol">＋</span>
+          <strong>点击选择或拖入截图</strong>
+          <span>截图边界与尺寸可以不同</span>
+        </button>
+        <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" hidden />
+
+        <div id="previewWrap" class="preview-wrap empty">
+          <div class="preview-empty">截图预览</div>
+          <img id="previewImage" alt="声骸截图预览" />
+        </div>
+
+        <div class="preview-toolbar">
+          <button id="stopRecognition" class="button danger-outline" type="button" disabled>停止识别</button>
+          <button id="recognizeAgain" class="button" type="button" disabled>重新识别</button>
+        </div>
+      </section>
+
+      <section class="panel review-panel">
+        <div class="panel-heading">
+          <div>
+            <span class="step">2</span>
+            <div><h2>核对属性</h2><p>识别结果可通过下拉框手动修正</p></div>
+          </div>
+          <button id="recognizeTop" class="button compact" type="button" disabled>重新识别</button>
+        </div>
+
+        <div class="table-head">
+          <span>序号</span><span>属性</span><span>档位</span><span>分数</span><span>状态</span>
+        </div>
+        <div id="rowsContainer" class="rows-container"></div>
+
+        <div class="review-footer">
+          <div class="subtotal-box"><span>本件小计</span><strong id="currentSubtotal">0</strong></div>
+          <details class="ocr-details">
+            <summary>OCR 明细</summary>
+            <pre id="rawText">尚未识别</pre>
+          </details>
+        </div>
+
+        <div class="record-bar">
+          <label for="slotSelect">记录到</label>
+          <select id="slotSelect" aria-label="记录位置"></select>
+          <button id="confirmRecord" class="button primary record-button" type="button">确认记录</button>
+        </div>
+      </section>
+
+      <aside class="side-column">
+        <section class="panel guide-panel">
+          <div class="side-heading"><h2>操作说明</h2></div>
+          <div class="guide-list">
+            <div class="guide-item"><span class="guide-icon blue">1</span><div><strong>导入截图</strong><p>粘贴、拖入或点击上传，五条辅音属性需完整显示。</p></div></div>
+            <div class="guide-item"><span class="guide-icon green">2</span><div><strong>自动识别</strong><p>程序读取整张图片，并筛选五条辅音属性与档位。</p></div></div>
+            <div class="guide-item"><span class="guide-icon orange">3</span><div><strong>核对属性</strong><p>识别有误时，直接修改属性或档位下拉框。</p></div></div>
+            <div class="guide-item"><span class="guide-icon purple">4</span><div><strong>记录声骸</strong><p>选择声骸 1—5，确认后写入下方记录卡。</p></div></div>
+          </div>
+          <div class="confidence-guide">
+            <span><i class="confidence-dot high"></i>可信度高</span>
+            <span><i class="confidence-dot medium"></i>建议核对</span>
+            <span><i class="confidence-dot manual"></i>手动选择</span>
+          </div>
+        </section>
+
+        <section class="panel stats-panel">
+          <div class="side-heading">
+            <h2>当前统计</h2>
+            <button id="clearAll" class="text-button danger" type="button">清空全部</button>
+          </div>
+          <div class="stats-grid">
+            <div><span>已记录</span><strong id="recordedSummary">0 / 5</strong></div>
+            <div><span>原始总分</span><strong id="rawTotal">0</strong></div>
+            <div class="average"><span>最终平均分</span><strong id="finalAverage">—</strong><small>五件小计相加 ÷ 5</small></div>
+          </div>
+          <button id="exportRecords" class="button primary export-button" type="button" disabled>导出五件声骸记录图</button>
+          <p id="exportHint" class="export-hint">记录满 5 件后即可导出。</p>
+        </section>
+      </aside>
+    </main>
+
+    <section class="records-section">
+      <div class="records-heading">
+        <div><span class="step">3</span><h2>已记录声骸</h2><span id="recordCount" class="count-badge">0 / 5</span></div>
+        <span>属性、档位与单条分数将完整保存在本机</span>
+      </div>
+      <div id="slotsList" class="slots-grid"></div>
+    </section>
+
+    <footer class="statusbar">
+      <div class="status-main"><span id="statusDot" class="status-dot loading"></span><span id="appStatus">正在准备本地 PaddleOCR 模型</span></div>
+      <div id="statusDetail" class="status-detail">本地识别 · 图片不会上传</div>
+    </footer>
+  </div>
+
+  <iframe id="ocrFrame" src="./ocr-sandbox.html" title="OCR 处理区" hidden></iframe>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
