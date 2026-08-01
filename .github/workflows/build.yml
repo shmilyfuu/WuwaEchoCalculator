@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Prepare generated sources, icon and OCR fixture
+      - name: Prepare generated sources, icon and fixtures
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check pillow pyyaml
@@ -37,6 +37,9 @@ jobs:
           python scripts/patch_native_export_figma.py
           python scripts/patch_native_v130_ui.py
           python scripts/patch_native_v130_ocr.py
+          python scripts/patch_native_v130_update.py
+          python scripts/patch_update_manager.py
+          python scripts/patch_updater_main.py
           python scripts/generate_ocr_smoke_image.py
 
       - name: Install ONNX Runtime SDK
@@ -54,7 +57,7 @@ jobs:
           curl.exe -L --fail --retry 4 --retry-delay 3 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml?download=true' -o "$models\rec.yml"
           python scripts/extract_ocr_dict.py "$models\rec.yml" "$models\dict.txt"
 
-      - name: Compile native application and smoke tests
+      - name: Compile native application, updater and smoke tests
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -75,13 +78,19 @@ jobs:
           cd /d "$native"
           rc.exe /nologo /fo "$out\app.res" app.rc
           if errorlevel 1 exit /b 1
-          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" build_entry.cpp ocr_build_entry.cpp ocr_parser.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculatorNative.exe" /LIBPATH:"$ortNative" onnxruntime.lib d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" build_entry.cpp ocr_build_entry.cpp ocr_parser.cpp update_manager_fixed.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculatorNative.exe" /LIBPATH:"$ortNative" onnxruntime.lib d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib winhttp.lib bcrypt.lib
           if errorlevel 1 exit /b 1
           mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoCalculatorNative.exe";#1
+          if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc updater_main_fixed.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoUpdater.exe" shell32.lib dwmapi.lib user32.lib gdi32.lib
+          if errorlevel 1 exit /b 1
+          mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoUpdater.exe";#1
           if errorlevel 1 exit /b 1
           cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" ocr_smoke_test.cpp ocr_build_entry.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\ocr_smoke_test.exe" /LIBPATH:"$ortNative" onnxruntime.lib windowscodecs.lib ole32.lib user32.lib gdi32.lib uuid.lib
           if errorlevel 1 exit /b 1
           cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc ocr_parser_smoke_test.cpp ocr_parser.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\ocr_parser_smoke_test.exe"
+          if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc update_manager_smoke_test.cpp update_manager_fixed.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\update_manager_smoke_test.exe" winhttp.lib bcrypt.lib
           if errorlevel 1 exit /b 1
           cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc png_export_smoke_test.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\png_export_smoke_test.exe" d2d1.lib windowscodecs.lib ole32.lib user32.lib gdi32.lib uuid.lib
           if errorlevel 1 exit /b 1
@@ -90,13 +99,16 @@ jobs:
           cmd.exe /d /c build-native.cmd
           if ($LASTEXITCODE -ne 0) { throw "Native build failed with exit code $LASTEXITCODE" }
           if (-not (Test-Path "$out\WuwaEchoCalculatorNative.exe")) { throw 'Native EXE was not created' }
+          if (-not (Test-Path "$out\WuwaEchoUpdater.exe")) { throw 'Updater EXE was not created' }
           Copy-Item "$ortNative\*.dll" $out -Force
 
-      - name: Run OCR parser regression test
+      - name: Run native regression tests
         shell: pwsh
         run: |
           & 'build-native\ocr_parser_smoke_test.exe'
           if ($LASTEXITCODE -ne 0) { throw "OCR parser smoke test failed with exit code $LASTEXITCODE" }
+          & 'build-native\update_manager_smoke_test.exe'
+          if ($LASTEXITCODE -ne 0) { throw "Updater smoke test failed with exit code $LASTEXITCODE" }
 
       - name: Run PP-OCRv5 smoke test
         shell: pwsh
@@ -106,7 +118,7 @@ jobs:
           & 'build-native\ocr_smoke_test.exe' $models $image
           if ($LASTEXITCODE -ne 0) { throw "OCR smoke test failed with exit code $LASTEXITCODE" }
 
-      - name: Run PNG export smoke test
+      - name: Run PNG export smoke test and validate generated source
         shell: pwsh
         run: |
           $output = Join-Path $PWD 'build-tests\png_export_smoke.png'
@@ -114,11 +126,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "PNG export smoke test failed with exit code $LASTEXITCODE" }
           if (-not (Test-Path $output)) { throw 'PNG smoke output was not created' }
           if ((Get-Item $output).Length -lt 1024) { throw 'PNG smoke output is unexpectedly small' }
-          if (-not (Test-Path 'native\app_v130_ocr.cpp')) { throw 'v1.3.0 generated source missing' }
-          $generated = Get-Content 'native\app_v130_ocr.cpp' -Raw
+          if (-not (Test-Path 'native\app_v130_update.cpp')) { throw 'v1.3.0 generated source missing' }
+          $generated = Get-Content 'native\app_v130_update.cpp' -Raw
           if ($generated.Contains('L"v1.3.0-native"')) { throw 'Preview version suffix remains in generated source' }
           if (-not $generated.Contains('CreateEmbeddedBitmap(rt.Get(),EmbeddedIcons::kStar)')) { throw 'Export star bitmap is not target-local' }
           if (-not $generated.Contains('SelectMainCompatibleOcrRows')) { throw 'Main-compatible OCR parser is not connected' }
+          if (-not $generated.Contains('NativeUpdateManager updateManager_')) { throw 'Native updater is not connected' }
+          if (-not $generated.Contains('DrawUpdateModal')) { throw 'Update progress dialog is missing' }
 
       - name: Assemble preview package
         shell: pwsh
@@ -126,6 +140,7 @@ jobs:
           $folder = 'artifact\鸣潮声骸计算器_v1.3.0_原生预览'
           New-Item -ItemType Directory -Force "$folder\models", "$folder\data", "$folder\updates" | Out-Null
           Copy-Item 'build-native\WuwaEchoCalculatorNative.exe' "$folder\鸣潮声骸计算器.exe"
+          Copy-Item 'build-native\WuwaEchoUpdater.exe' "$folder\WuwaEchoUpdater.exe"
           Copy-Item 'packages\Microsoft.ML.OnnxRuntime\runtimes\win-x64\native\*.dll' $folder -Force
           Copy-Item 'build-models\det.onnx','build-models\rec.onnx','build-models\dict.txt' "$folder\models" -Force
           @'
@@ -136,16 +151,23 @@ jobs:
           - OCR 图片预处理、属性匹配、严格档位误差和五行选择规则向 main 对齐。
           - 记录成功后自动选择下一个空声骸位置。
           - 导出标题输入框仅在获得焦点时显示底部高亮条。
+          - 更新检查优先 Gitee，失败后使用 GitHub；支持下载、校验和安装进度。
           - 当前包仍属于迁移分支测试产物。
 
-          请保留 models 目录和 ONNX Runtime DLL，不要单独移动 EXE。
+          请保留 models 目录、WuwaEchoUpdater.exe 和 ONNX Runtime DLL，不要单独移动主程序。
           '@ | Set-Content "$folder\原生迁移说明.txt" -Encoding UTF8
           Compress-Archive -Path $folder -DestinationPath 'artifact\鸣潮声骸计算器_v1.3.0_原生预览.zip' -CompressionLevel Optimal
+          Copy-Item 'artifact\鸣潮声骸计算器_v1.3.0_原生预览.zip' 'artifact\WuwaEchoCalculator-v1.3.0-windows-x64.zip'
+          $hash = (Get-FileHash 'artifact\WuwaEchoCalculator-v1.3.0-windows-x64.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  WuwaEchoCalculator-v1.3.0-windows-x64.zip" | Set-Content 'artifact\WuwaEchoCalculator-v1.3.0-windows-x64.zip.sha256' -Encoding ASCII
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: wuwa-echo-calculator-v1.3.0-native-preview
-          path: artifact/鸣潮声骸计算器_v1.3.0_原生预览.zip
+          path: |
+            artifact/鸣潮声骸计算器_v1.3.0_原生预览.zip
+            artifact/WuwaEchoCalculator-v1.3.0-windows-x64.zip
+            artifact/WuwaEchoCalculator-v1.3.0-windows-x64.zip.sha256
           if-no-files-found: error
           retention-days: 7
