@@ -138,6 +138,9 @@ function setupImageInput() {
   });
 
   document.addEventListener('paste', event => {
+    if (event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target?.isContentEditable) return;
     const file = [...(event.clipboardData?.items || [])]
       .find(item => item.type.startsWith('image/'))
       ?.getAsFile();
@@ -207,6 +210,20 @@ function setupOcrMessages() {
 }
 
 function setupHostActions() {
+  if (window.chrome?.webview) {
+    window.chrome.webview.addEventListener('message', event => {
+      if (event.data === 'export:completed') {
+        setStatus('记录图片已导出', 'success');
+      } else if (event.data === 'export:canceled') {
+        setStatus('已取消导出', 'info');
+      } else if (event.data === 'export:interrupted') {
+        setStatus('记录图片保存中断', 'error');
+      } else if (event.data === 'export:error') {
+        setStatus('无法打开保存窗口或写入所选位置', 'error');
+      }
+    });
+  }
+
   dom.topmostToggle.addEventListener('change', () => {
     if (window.chrome?.webview) {
       window.chrome.webview.postMessage(`topmost:${dom.topmostToggle.checked ? '1' : '0'}`);

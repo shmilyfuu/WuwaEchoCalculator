@@ -117,13 +117,13 @@ jobs:
       - name: Assemble portable package
         shell: pwsh
         run: |
-          $folder = 'artifact\鸣潮声骸计算器_v1.2.1'
+          $folder = 'artifact\鸣潮声骸计算器_v1.2.2'
           New-Item -ItemType Directory -Force "$folder\web", "$folder\data" | Out-Null
           Copy-Item 'dist-web\*' "$folder\web" -Recurse -Force
           Copy-Item 'dist-web\index.html' "$folder\web\panel.html" -Force
           Copy-Item 'build-native\WuwaEchoCalculator.exe' "$folder\鸣潮声骸计算器.exe"
           @'
-          鸣潮声骸计算器 v1.2.1
+          鸣潮声骸计算器 v1.2.2
 
           1. 完整解压压缩包，保留 web 与 data 目录。
           2. 双击“鸣潮声骸计算器.exe”。
@@ -136,18 +136,14 @@ jobs:
           截图和识别数据均在本机处理。
           '@ | Set-Content "$folder\使用说明.txt" -Encoding UTF8
           @'
-          v1.2.1
-          - 客户区域固定为 1188 × 772，保留最小化和关闭按钮。
-          - 主界面、空卡和确认弹窗按设计稿统一布局与配色。
-          - 清空、覆盖和删除记录统一使用二次确认弹窗。
-          - 五件声骸卡片固定显示在同一屏。
-          - 新增停止识别与记录图导出。
-          - 置信度改为绿、黄、红三色圆点。
-          - 移除预测分与方案显示。
-          - 新增应用图标并调整按钮文字布局。
+          v1.2.2
+          - 导出记录时使用 Windows 原生“另存为”窗口，可自行选择保存位置和文件名。
+          - 隐藏 WebView2 默认下载浮层，导出结果改由底部状态栏提示。
+          - 恢复导出标题输入框的文本选择、复制、粘贴和右键编辑菜单。
+          - 统一按钮的普通、悬停和按下状态配色，按钮保持普通鼠标指针。
           '@ | Set-Content "$folder\更新说明.txt" -Encoding UTF8
           @'
-          版本：1.2.1
+          版本：1.2.2
           窗口：WebView2 独立应用
           计分：五件声骸小计相加 ÷ 5
           OCR：PP-OCRv5 本地模型
@@ -157,7 +153,7 @@ jobs:
       - name: Validate package
         shell: pwsh
         run: |
-          $folder = 'artifact\鸣潮声骸计算器_v1.2.1'
+          $folder = 'artifact\鸣潮声骸计算器_v1.2.2'
           $required = @(
             "$folder\鸣潮声骸计算器.exe",
             "$folder\web\panel.html",
@@ -180,12 +176,12 @@ jobs:
 
       - name: Create ZIP
         shell: pwsh
-        run: Compress-Archive -Path 'artifact\鸣潮声骸计算器_v1.2.1' -DestinationPath 'artifact\鸣潮声骸计算器_WebView2独立版_v1.2.1.zip' -CompressionLevel Optimal
+        run: Compress-Archive -Path 'artifact\鸣潮声骸计算器_v1.2.2' -DestinationPath 'artifact\鸣潮声骸计算器_WebView2独立版_v1.2.2.zip' -CompressionLevel Optimal
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wuwa-echo-calculator-v1.2.1
-          path: artifact/鸣潮声骸计算器_WebView2独立版_v1.2.1.zip
+          name: wuwa-echo-calculator-v1.2.2
+          path: artifact/鸣潮声骸计算器_WebView2独立版_v1.2.2.zip
           if-no-files-found: error
           retention-days: 7

@@ -2,9 +2,12 @@
 #define _UNICODE
 #include <windows.h>
 #include <dwmapi.h>
+#include <shobjidl.h>
 #include <wrl.h>
 #include <WebView2.h>
 #include <filesystem>
+#include <memory>
+#include <new>
 #include <string>
 
 using Microsoft::WRL::Callback;
@@ -15,11 +18,15 @@ HWND g_window = nullptr;
 ComPtr<ICoreWebView2Controller> g_controller;
 ComPtr<ICoreWebView2Controller3> g_controller3;
 ComPtr<ICoreWebView2> g_webview;
+ComPtr<ICoreWebView2_4> g_webview4;
 EventRegistrationToken g_messageToken{};
+EventRegistrationToken g_downloadToken{};
+bool g_downloadHandlerRegistered = false;
 std::wstring g_exeDir;
 
 constexpr wchar_t kWindowClass[] = L"WuwaEchoCalculatorWindow";
 constexpr wchar_t kWindowTitle[] = L"鸣潮声骸计算器";
+constexpr UINT kShowSaveDialogMessage = WM_APP + 1;
 constexpr int kClientWidthDips = 1188;
 constexpr int kClientHeightDips = 772;
 constexpr DWORD kWindowStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
@@ -70,6 +77,178 @@ void SetTopmost(bool enabled) {
     if (!g_window) return;
     SetWindowPos(g_window, enabled ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+void PostHostMessage(const wchar_t* message) {
+    if (g_webview) g_webview->PostWebMessageAsString(message);
+}
+
+enum class DownloadSaveChoice { Pending, Selected, Canceled, Error };
+
+struct DownloadContext {
+    DownloadSaveChoice choice = DownloadSaveChoice::Pending;
+    COREWEBVIEW2_DOWNLOAD_STATE terminalState = COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS;
+    bool hasTerminalState = false;
+    bool notified = false;
+};
+
+struct PendingSaveDialog {
+    ComPtr<ICoreWebView2DownloadStartingEventArgs> args;
+    ComPtr<ICoreWebView2Deferral> deferral;
+    std::shared_ptr<DownloadContext> context;
+};
+
+void NotifyDownloadResult(const std::shared_ptr<DownloadContext>& context) {
+    if (!context || context->notified) return;
+    if (context->choice == DownloadSaveChoice::Canceled) {
+        context->notified = true;
+        PostHostMessage(L"export:canceled");
+    } else if (context->choice == DownloadSaveChoice::Error) {
+        context->notified = true;
+        PostHostMessage(L"export:error");
+    } else if (context->choice == DownloadSaveChoice::Selected && context->hasTerminalState) {
+        context->notified = true;
+        PostHostMessage(context->terminalState == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED
+                            ? L"export:completed"
+                            : L"export:interrupted");
+    }
+}
+
+void CompletePendingSaveDialog(PendingSaveDialog* pending) {
+    std::unique_ptr<PendingSaveDialog> holder(pending);
+    if (!pending || !pending->args || !pending->deferral || !pending->context) return;
+
+    ComPtr<IFileSaveDialog> dialog;
+    HRESULT result = CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                      IID_PPV_ARGS(&dialog));
+    if (FAILED(result) || !dialog) {
+        pending->context->choice = DownloadSaveChoice::Error;
+        pending->args->put_Cancel(TRUE);
+        pending->deferral->Complete();
+        NotifyDownloadResult(pending->context);
+        return;
+    }
+
+    FILEOPENDIALOGOPTIONS options{};
+    if (SUCCEEDED(dialog->GetOptions(&options))) {
+        dialog->SetOptions(options | FOS_OVERWRITEPROMPT | FOS_FORCEFILESYSTEM |
+                           FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR);
+    }
+    const COMDLG_FILTERSPEC filters[] = {{L"PNG 图片 (*.png)", L"*.png"}};
+    dialog->SetFileTypes(ARRAYSIZE(filters), filters);
+    dialog->SetFileTypeIndex(1);
+    dialog->SetDefaultExtension(L"png");
+    dialog->SetTitle(L"导出声骸记录");
+
+    LPWSTR suggestedPath = nullptr;
+    if (SUCCEEDED(pending->args->get_ResultFilePath(&suggestedPath)) && suggestedPath) {
+        const std::wstring suggestedName = std::filesystem::path(suggestedPath).filename().wstring();
+        if (!suggestedName.empty()) dialog->SetFileName(suggestedName.c_str());
+        CoTaskMemFree(suggestedPath);
+    } else {
+        dialog->SetFileName(L"鸣潮声骸记录.png");
+    }
+
+    result = dialog->Show(g_window);
+    if (result == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+        pending->context->choice = DownloadSaveChoice::Canceled;
+        pending->args->put_Cancel(TRUE);
+        pending->deferral->Complete();
+        NotifyDownloadResult(pending->context);
+        return;
+    }
+    if (FAILED(result)) {
+        pending->context->choice = DownloadSaveChoice::Error;
+        pending->args->put_Cancel(TRUE);
+        pending->deferral->Complete();
+        NotifyDownloadResult(pending->context);
+        return;
+    }
+
+    ComPtr<IShellItem> selectedItem;
+    LPWSTR selectedPath = nullptr;
+    if (FAILED(dialog->GetResult(&selectedItem)) || !selectedItem ||
+        FAILED(selectedItem->GetDisplayName(SIGDN_FILESYSPATH, &selectedPath)) || !selectedPath) {
+        pending->context->choice = DownloadSaveChoice::Error;
+        pending->args->put_Cancel(TRUE);
+        pending->deferral->Complete();
+        NotifyDownloadResult(pending->context);
+        return;
+    }
+
+    result = pending->args->put_ResultFilePath(selectedPath);
+    CoTaskMemFree(selectedPath);
+    if (FAILED(result)) {
+        pending->context->choice = DownloadSaveChoice::Error;
+        pending->args->put_Cancel(TRUE);
+        pending->deferral->Complete();
+        NotifyDownloadResult(pending->context);
+        return;
+    }
+
+    pending->context->choice = DownloadSaveChoice::Selected;
+    pending->deferral->Complete();
+    NotifyDownloadResult(pending->context);
+}
+
+HRESULT HandleDownloadStarting(ICoreWebView2DownloadStartingEventArgs* args) {
+    if (!args) return E_INVALIDARG;
+
+    // The host owns the download experience, so WebView2 must not show its flyout.
+    args->put_Handled(TRUE);
+
+    auto context = std::make_shared<DownloadContext>();
+    ComPtr<ICoreWebView2DownloadOperation> operation;
+    bool stateHandlerRegistered = false;
+    if (SUCCEEDED(args->get_DownloadOperation(&operation)) && operation) {
+        EventRegistrationToken stateToken{};
+        const HRESULT stateResult = operation->add_StateChanged(
+            Callback<ICoreWebView2StateChangedEventHandler>(
+                [context](ICoreWebView2DownloadOperation* sender, IUnknown*) -> HRESULT {
+                    COREWEBVIEW2_DOWNLOAD_STATE state{};
+                    if (FAILED(sender->get_State(&state))) return S_OK;
+                    if (state != COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS) {
+                        context->terminalState = state;
+                        context->hasTerminalState = true;
+                        NotifyDownloadResult(context);
+                    }
+                    return S_OK;
+                }).Get(),
+            &stateToken);
+        stateHandlerRegistered = SUCCEEDED(stateResult);
+    }
+    if (!stateHandlerRegistered) {
+        args->put_Cancel(TRUE);
+        context->choice = DownloadSaveChoice::Error;
+        NotifyDownloadResult(context);
+        return S_OK;
+    }
+
+    auto* pending = new (std::nothrow) PendingSaveDialog{};
+    if (!pending) {
+        args->put_Cancel(TRUE);
+        context->choice = DownloadSaveChoice::Error;
+        NotifyDownloadResult(context);
+        return S_OK;
+    }
+    pending->args = args;
+    pending->context = context;
+    if (FAILED(args->GetDeferral(&pending->deferral)) || !pending->deferral) {
+        delete pending;
+        args->put_Cancel(TRUE);
+        context->choice = DownloadSaveChoice::Error;
+        NotifyDownloadResult(context);
+        return S_OK;
+    }
+    if (!PostMessageW(g_window, kShowSaveDialogMessage, 0, reinterpret_cast<LPARAM>(pending))) {
+        args->put_Cancel(TRUE);
+        pending->deferral->Complete();
+        delete pending;
+        context->choice = DownloadSaveChoice::Error;
+        NotifyDownloadResult(context);
+    }
+
+    return S_OK;
 }
 
 void ShowRuntimeError(HRESULT hr) {
@@ -133,7 +312,7 @@ void InitializeWebView() {
                                 settings->put_AreDefaultScriptDialogsEnabled(TRUE);
                                 settings->put_IsWebMessageEnabled(TRUE);
                                 settings->put_AreDevToolsEnabled(FALSE);
-                                settings->put_AreDefaultContextMenusEnabled(FALSE);
+                                settings->put_AreDefaultContextMenusEnabled(TRUE);
                                 settings->put_IsStatusBarEnabled(FALSE);
                                 settings->put_IsZoomControlEnabled(FALSE);
                             }
@@ -165,6 +344,16 @@ void InitializeWebView() {
                                     }).Get(),
                                 &g_messageToken);
 
+                            if (SUCCEEDED(g_webview.As(&g_webview4)) && g_webview4) {
+                                const HRESULT downloadResult = g_webview4->add_DownloadStarting(
+                                    Callback<ICoreWebView2DownloadStartingEventHandler>(
+                                        [](ICoreWebView2*, ICoreWebView2DownloadStartingEventArgs* args) -> HRESULT {
+                                            return HandleDownloadStarting(args);
+                                        }).Get(),
+                                    &g_downloadToken);
+                                g_downloadHandlerRegistered = SUCCEEDED(downloadResult);
+                            }
+
                             ResizeWebView();
                             g_controller->put_IsVisible(TRUE);
                             return g_webview->Navigate(L"https://app.local/panel.html");
@@ -183,6 +372,9 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         return 0;
     case WM_SIZE:
         ResizeWebView();
+        return 0;
+    case kShowSaveDialogMessage:
+        CompletePendingSaveDialog(reinterpret_cast<PendingSaveDialog*>(lParam));
         return 0;
     case WM_GETMINMAXINFO: {
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
@@ -205,7 +397,12 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     }
     case WM_DESTROY:
         if (g_webview) g_webview->remove_WebMessageReceived(g_messageToken);
+        if (g_webview4 && g_downloadHandlerRegistered) {
+            g_webview4->remove_DownloadStarting(g_downloadToken);
+        }
         if (g_controller) g_controller->Close();
+        g_downloadHandlerRegistered = false;
+        g_webview4.Reset();
         g_webview.Reset();
         g_controller3.Reset();
         g_controller.Reset();

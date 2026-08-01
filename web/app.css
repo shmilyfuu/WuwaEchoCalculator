@@ -37,7 +37,10 @@ button,
 select,
 input { font: inherit; }
 
-button { color: inherit; }
+button {
+  color: inherit;
+  cursor: default;
+}
 
 .sr-only {
   position: absolute !important;
@@ -211,7 +214,6 @@ button { color: inherit; }
   color: var(--muted);
   font-size: 12px;
   line-height: 17px;
-  cursor: pointer;
 }
 
 .drop-zone:hover,
@@ -286,15 +288,17 @@ button { color: inherit; }
   line-height: 20px;
   font-weight: 400;
   white-space: nowrap;
-  cursor: pointer;
 }
 
-.button:hover:not(:disabled) { background: var(--control-hover); }
+.button:hover:not(:disabled) { background: rgba(255, 255, 255, .08); }
+.button:active:not(:disabled) { background: rgba(255, 255, 255, .04); }
 .button:disabled { cursor: default; }
 .button.primary { background: var(--accent); color: #000; }
-.button.primary:hover:not(:disabled) { background: #70ceff; }
-.button.danger { background: var(--danger-bg); }
-.button.danger:hover:not(:disabled) { background: #56302e; }
+.button.primary:hover:not(:disabled) { background: #afe6ff; }
+.button.primary:active:not(:disabled) { background: #0078d4; }
+.button.danger { background: rgba(196, 43, 28, .50); }
+.button.danger:hover:not(:disabled) { background: rgba(196, 43, 28, .70); }
+.button.danger:active:not(:disabled) { background: rgba(196, 43, 28, .90); }
 
 .review-panel {
   position: absolute;
@@ -649,7 +653,6 @@ button { color: inherit; }
 .slot-card.empty {
   display: block;
   color: var(--text);
-  cursor: pointer;
 }
 
 .slot-card.empty:hover { background: rgba(255, 255, 255, .05); }
@@ -779,11 +782,13 @@ button { color: inherit; }
   color: var(--text);
   font-size: 12px;
   line-height: 20px;
-  cursor: pointer;
 }
 
-.slot-actions button:hover { background: var(--control-hover); }
-.slot-actions button.danger { background: var(--danger-bg); }
+.slot-actions button:hover { background: rgba(255, 255, 255, .08); }
+.slot-actions button:active { background: rgba(255, 255, 255, .04); }
+.slot-actions button.danger { background: rgba(196, 43, 28, .50); }
+.slot-actions button.danger:hover { background: rgba(196, 43, 28, .70); }
+.slot-actions button.danger:active { background: rgba(196, 43, 28, .90); }
 
 .statusbar {
   position: absolute;
@@ -936,6 +941,7 @@ button { color: inherit; }
   font: inherit;
   font-size: 14px;
   line-height: 20px;
+  user-select: text;
 }
 
 #exportTitleInput::placeholder { color: rgba(255, 255, 255, .60); }
