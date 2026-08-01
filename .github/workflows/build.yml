@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -24,15 +24,28 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Generate application icon
+      - name: Prepare generated sources and icon
         shell: pwsh
         run: |
-          python -m pip install --disable-pip-version-check pillow
+          python -m pip install --disable-pip-version-check pillow pyyaml
           python scripts/generate_icon.py
+          python scripts/patch_native_ui.py
+          python scripts/patch_native_ocr.py
 
-      - name: Generate corrected native source
+      - name: Install ONNX Runtime SDK
         shell: pwsh
-        run: python scripts/patch_native_ui.py
+        run: nuget install Microsoft.ML.OnnxRuntime -OutputDirectory packages -ExcludeVersion -NonInteractive
+
+      - name: Download PP-OCRv5 models
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $models = Join-Path $PWD 'build-models'
+          New-Item -ItemType Directory -Force $models | Out-Null
+          curl.exe -L --fail --retry 4 --retry-delay 3 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/main/inference.onnx?download=true' -o "$models\det.onnx"
+          curl.exe -L --fail --retry 4 --retry-delay 3 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx?download=true' -o "$models\rec.onnx"
+          curl.exe -L --fail --retry 4 --retry-delay 3 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml?download=true' -o "$models\rec.yml"
+          python scripts/extract_ocr_dict.py "$models\rec.yml" "$models\dict.txt"
 
       - name: Compile native Direct2D application
         shell: pwsh
@@ -44,6 +57,9 @@ jobs:
           $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
           $native = Resolve-Path 'native'
           $out = Join-Path $PWD 'build-native'
+          $ort = Resolve-Path 'packages\Microsoft.ML.OnnxRuntime'
+          $ortInclude = Join-Path $ort 'build\native\include'
+          $ortNative = Join-Path $ort 'runtimes\win-x64\native'
           New-Item -ItemType Directory -Force $out | Out-Null
           $batch = @"
           @echo off
@@ -52,7 +68,7 @@ jobs:
           cd /d "$native"
           rc.exe /nologo /fo "$out\app.res" app.rc
           if errorlevel 1 exit /b 1
-          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc build_entry.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculatorNative.exe" d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" build_entry.cpp ocr_build_entry.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculatorNative.exe" /LIBPATH:"$ortNative" onnxruntime.lib d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib
           if errorlevel 1 exit /b 1
           mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoCalculatorNative.exe";#1
           if errorlevel 1 exit /b 1
@@ -65,11 +81,13 @@ jobs:
       - name: Assemble preview package
         shell: pwsh
         run: |
-          $folder = 'artifact\鸣潮声骸计算器_Direct2D原生预览'
-          New-Item -ItemType Directory -Force $folder | Out-Null
-          Copy-Item 'build-native\WuwaEchoCalculatorNative.exe' "$folder\鸣潮声骸计算器_原生预览.exe"
+          $folder = 'artifact\鸣潮声骸计算器_Direct2D原生OCR预览'
+          New-Item -ItemType Directory -Force "$folder\models" | Out-Null
+          Copy-Item 'build-native\WuwaEchoCalculatorNative.exe' "$folder\鸣潮声骸计算器_原生OCR预览.exe"
+          Copy-Item 'packages\Microsoft.ML.OnnxRuntime\runtimes\win-x64\native\*.dll' $folder -Force
+          Copy-Item 'build-models\det.onnx','build-models\rec.onnx','build-models\dict.txt' "$folder\models" -Force
           @'
-          鸣潮声骸计算器 Direct2D 原生迁移预览
+          鸣潮声骸计算器 Direct2D 原生 OCR 预览
 
           本次修正：
           - 使用正式版下拉箭头、词条星形和识别状态图标。
@@ -79,21 +97,21 @@ jobs:
           - 导出标题输入框改为深色真实输入层叠加 Direct2D 外观。
           - 恢复“请输入标题（可选）”占位提示，长度提示常驻显示。
 
-          已有功能：
-          - 图片点击导入、文件拖入、Ctrl+V 粘贴。
-          - 手动选择属性和档位、计分、记录、编辑、删除、清空。
-          - 五件声骸全部记录后启用“导出记录”。
-          - PNG 记录图由 WIC 与 Direct2D 原生生成。
+          OCR 试验功能：
+          - 使用 PP-OCRv5 检测与识别 ONNX 模型在本机处理图片。
+          - 导入、拖入或粘贴图片后自动识别。
+          - 支持停止识别与重新识别。
+          - 识别结果会自动匹配声骸属性与档位，仍需人工核对。
 
-          当前 OCR 原生推理仍在接入阶段。
-          这是迁移验证包，请勿替换正式版。
+          当前属于首轮原生 OCR 验证，检测框采用轻量轴对齐后处理，复杂裁切或倾斜图片可能漏识别。
+          请保留 models 目录和 ONNX Runtime DLL，不要单独移动 EXE。
           '@ | Set-Content "$folder\原生迁移说明.txt" -Encoding UTF8
-          Compress-Archive -Path $folder -DestinationPath 'artifact\鸣潮声骸计算器_Direct2D原生预览.zip' -CompressionLevel Optimal
+          Compress-Archive -Path $folder -DestinationPath 'artifact\鸣潮声骸计算器_Direct2D原生OCR预览.zip' -CompressionLevel Optimal
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wuwa-echo-calculator-native-direct2d-preview
-          path: artifact/鸣潮声骸计算器_Direct2D原生预览.zip
+          name: wuwa-echo-calculator-native-direct2d-ocr-preview
+          path: artifact/鸣潮声骸计算器_Direct2D原生OCR预览.zip
           if-no-files-found: error
           retention-days: 7
