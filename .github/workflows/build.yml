@@ -169,6 +169,8 @@ jobs:
             "$folder\web\assets\s_abnormal.png",
             "$folder\web\assets\s_manual.png",
             "$folder\web\assets\icon_Star.png",
+            "$folder\web\assets\down.png",
+            "$folder\web\assets\down@2x.png",
             "$folder\web\assets\ort-wasm-simd-threaded.jsep.mjs",
             "$folder\web\assets\ort-wasm-simd-threaded.jsep.wasm"
           )

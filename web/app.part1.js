@@ -32,7 +32,8 @@ const state = {
   modelReady: false,
   recognizing: false,
   pendingRun: false,
-  stoppedByUser: false
+  stoppedByUser: false,
+  initializingOcr: true
 };
 
 let activeConfirmation = null;
@@ -71,7 +72,11 @@ function formatScore(value) {
 }
 
 function shortAttribute(name) {
-  return name;
+  return ({
+    生命百分比: '生命',
+    攻击百分比: '攻击',
+    防御百分比: '防御'
+  })[name] || name;
 }
 
 function setStatus(message, kind = 'info') {

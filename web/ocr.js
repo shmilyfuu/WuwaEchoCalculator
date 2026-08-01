@@ -24,7 +24,7 @@ async function ensureOcr(config) {
     textRecognitionModelAsset: { url: config.recModelUrl },
     textDetectionBatchSize: 1,
     textRecognitionBatchSize: 8,
-    worker: false,
+    worker: true,
     ortOptions: { backend: 'wasm', wasmPaths: config.wasmBaseUrl, numThreads: 1, simd: true }
   });
   send({ type: 'ocr-progress', stage: 'model', progress: 1, text: '本地模型已就绪' });
