@@ -1,10 +1,149 @@
 
 function roundedRect(ctx,x,y,w,h,r,fill,stroke=null){ctx.beginPath();ctx.roundRect(x,y,w,h,r);if(fill){ctx.fillStyle=fill;ctx.fill()}if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=2;ctx.stroke()}}
-function exportRecordsImage(){const records=[1,2,3,4,5].map(slot=>state.slots[slot]);if(records.some(record=>!record))return;const total=records.reduce((sum,record)=>sum+Number(record.subtotal||0),0),canvas=document.createElement('canvas');canvas.width=2000;canvas.height=920;const ctx=canvas.getContext('2d');ctx.fillStyle='#202020';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#4cc2ff';ctx.fillRect(0,0,2000,10);ctx.fillStyle='#f3f3f3';ctx.font='600 40px "Microsoft YaHei UI", "Segoe UI", sans-serif';ctx.fillText('鸣潮声骸记录',50,70);ctx.fillStyle='#969696';ctx.font='22px "Microsoft YaHei UI", "Segoe UI", sans-serif';const now=new Date();ctx.fillText(`导出时间  ${now.toLocaleString('zh-CN',{hour12:false})}`,50,110);roundedRect(ctx,1440,35,510,92,14,'#292929','rgba(255,255,255,.12)');ctx.fillStyle='#969696';ctx.font='18px "Microsoft YaHei UI", sans-serif';ctx.fillText('原始总分',1480,72);ctx.fillText('最终平均分',1690,72);ctx.fillStyle='#f3f3f3';ctx.font='700 32px "Segoe UI", sans-serif';ctx.fillText(String(total),1480,108);ctx.fillStyle='#6ccb5f';ctx.fillText((total/5).toFixed(1),1690,108);const cardW=364,cardH=690,gap=20,startX=50,cardY=160;records.forEach((record,index)=>{const x=startX+index*(cardW+gap);roundedRect(ctx,x,cardY,cardW,cardH,16,'#292929','rgba(255,255,255,.13)');ctx.fillStyle='#333333';ctx.fillRect(x+2,cardY+72,cardW-4,2);ctx.fillStyle='#f3f3f3';ctx.font='600 26px "Microsoft YaHei UI", sans-serif';ctx.fillText(`声骸 ${index+1}`,x+24,cardY+47);const subColor=record.subtotal>0?'#6ccb5f':record.subtotal<0?'#ff99a4':'#c9c9c9';ctx.fillStyle=subColor;ctx.font='700 24px "Segoe UI", "Microsoft YaHei UI", sans-serif';ctx.textAlign='right';ctx.fillText(`小计 ${formatScore(record.subtotal)}`,x+cardW-24,cardY+47);ctx.textAlign='left';record.rows.forEach((row,rowIndex)=>{const y=cardY+118+rowIndex*88;if(rowIndex>0){ctx.strokeStyle='rgba(255,255,255,.065)';ctx.beginPath();ctx.moveTo(x+24,y-29);ctx.lineTo(x+cardW-24,y-29);ctx.stroke()}ctx.fillStyle='#c9c9c9';ctx.font='22px "Microsoft YaHei UI", sans-serif';ctx.fillText(shortAttribute(row.attribute),x+24,y);ctx.fillStyle='#f3f3f3';ctx.font='23px "Segoe UI", "Microsoft YaHei UI", sans-serif';ctx.textAlign='right';ctx.fillText(row.value,x+cardW-82,y);ctx.fillStyle=row.score>0?'#6ccb5f':row.score<0?'#ff99a4':'#969696';ctx.font='700 23px "Segoe UI", sans-serif';ctx.fillText(formatScore(row.score),x+cardW-24,y);ctx.textAlign='left'})});ctx.fillStyle='#777';ctx.font='18px "Microsoft YaHei UI", sans-serif';ctx.fillText('鸣潮声骸计算器 v1.2.1 · 本地记录导出',50,890);canvas.toBlob(blob=>{if(!blob)return;const url=URL.createObjectURL(blob),link=document.createElement('a'),stamp=now.toISOString().replace(/[:T]/g,'-').slice(0,19);link.download=`鸣潮声骸记录_${stamp}.png`;link.href=url;link.click();setTimeout(()=>URL.revokeObjectURL(url),1500)},'image/png')}
+
+function loadCanvasImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`无法读取导出资源：${url}`));
+    image.src = url;
+  });
+}
+
+function exportScoreColor(score) {
+  if (score > 0) return '#6CCB5F';
+  if (score < 0) return '#FF99A4';
+  return 'rgba(255, 255, 255, .60)';
+}
+
+function defaultExportTitle() {
+  const version = document.querySelector('.brand-title span')?.textContent.trim() || '';
+  if (!version) return '鸣潮声骸计算器';
+  return `鸣潮声骸计算器${version.startsWith('v') ? version : `v${version}`}`;
+}
+
+function drawExportText(ctx, text, x, top, lineHeight, offsetY = 0) {
+  const metrics = ctx.measureText('声骸记录Ag');
+  const ascent = Number.isFinite(metrics.fontBoundingBoxAscent)
+    ? metrics.fontBoundingBoxAscent
+    : metrics.actualBoundingBoxAscent;
+  const descent = Number.isFinite(metrics.fontBoundingBoxDescent)
+    ? metrics.fontBoundingBoxDescent
+    : metrics.actualBoundingBoxDescent;
+  const baseline = top + (lineHeight - ascent - descent) / 2 + ascent + offsetY;
+  ctx.fillText(text, x, baseline);
+}
+
+function drawExportCard(ctx, record, index, x, y, starIcon) {
+  roundedRect(ctx, x, y, 244, 195, 3, 'rgba(255, 255, 255, .03)');
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fff';
+  ctx.font = '600 16px "Microsoft YaHei UI", "Segoe UI", sans-serif';
+  drawExportText(ctx, '声骸', x + 12, y + 12, 22, 1);
+  drawExportText(ctx, String(index + 1), x + 49, y + 12, 22, 1);
+
+  const subtotal = formatScore(record.subtotal);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fff';
+  drawExportText(ctx, '小计', x + 169, y + 12, 22, 1);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = exportScoreColor(record.subtotal);
+  drawExportText(ctx, subtotal, x + 232, y + 12, 22, 1);
+
+  record.rows.forEach((row, rowIndex) => {
+    const rowY = y + 42 + rowIndex * 29;
+    roundedRect(ctx, x + 12, rowY, 220, 25, 1, 'rgba(255, 255, 255, .06)');
+    ctx.drawImage(starIcon, x + 18, rowY + (rowIndex === 0 ? 7 : 8), 11, 11);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#fff';
+    ctx.font = '400 14px "Microsoft YaHei UI", "Segoe UI", sans-serif';
+    drawExportText(ctx, shortAttribute(row.attribute), x + 33, rowY + 3, 20, -1);
+
+    ctx.textAlign = 'right';
+    drawExportText(ctx, row.value, x + 196, rowY + 3, 20, -1);
+    ctx.fillStyle = exportScoreColor(row.score);
+    drawExportText(ctx, formatScore(row.score), x + 226, rowY + 3, 20, -1);
+  });
+}
+
+function drawExportMetric(ctx, label, value, caption, x, y) {
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fff';
+  ctx.font = '400 16px "Microsoft YaHei UI", "Segoe UI", sans-serif';
+  drawExportText(ctx, label, x + 40, y, 22);
+  ctx.fillStyle = '#6CCB5F';
+  ctx.font = '600 24px "Microsoft YaHei UI", "Segoe UI", sans-serif';
+  drawExportText(ctx, value, x + 40, y + 30, 34, -1);
+  ctx.fillStyle = 'rgba(255, 255, 255, .60)';
+  ctx.font = '400 12px "Microsoft YaHei UI", "Segoe UI", sans-serif';
+  drawExportText(ctx, caption, x + 40, y + 68, 17);
+}
+
+async function exportRecordsImage(customTitle = '') {
+  const records = [1, 2, 3, 4, 5].map(slot => state.slots[slot]);
+  if (records.some(record => !record)) return;
+
+  const now = new Date();
+  const total = records.reduce((sum, record) => sum + Number(record.subtotal || 0), 0);
+  const canvas = document.createElement('canvas');
+  canvas.width = 576;
+  canvas.height = 749;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('无法创建导出画布');
+
+  const starIcon = await loadCanvasImage(new URL('./assets/icon_Star@2x.png', location.href).href);
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#202020';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fff';
+  ctx.font = '600 20px "Microsoft YaHei UI", "Segoe UI", sans-serif';
+  drawExportText(ctx, '声骸记录', 40, 40, 28, -1);
+  ctx.fillStyle = 'rgba(255, 255, 255, .60)';
+  ctx.font = '400 14px "Microsoft YaHei UI", "Segoe UI", sans-serif';
+  drawExportText(ctx, '导出时间', 41, 68, 20, -1);
+  drawExportText(ctx, now.toLocaleString('zh-CN', { hour12: false }), 101, 68, 20, -1);
+
+  const cardPositions = [[40, 100], [292, 100], [40, 307], [292, 307], [40, 514]];
+  records.forEach((record, index) => {
+    const [x, y] = cardPositions[index];
+    drawExportCard(ctx, record, index, x, y, starIcon);
+  });
+
+  roundedRect(ctx, 292, 514, 244, 155, 3, 'rgba(255, 255, 255, .03)');
+  drawExportMetric(ctx, '总分', String(total), '5件声骸总分', 320, 549);
+  drawExportMetric(ctx, '平均分', (total / 5).toFixed(1), '5件声骸平均分', 428, 549);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#fff';
+  ctx.font = '400 16px "Microsoft YaHei UI", "Segoe UI", sans-serif';
+  drawExportText(ctx, customTitle || defaultExportTitle(), 536, 687, 22);
+
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('导出图片生成失败');
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const stamp = now.toISOString().replace(/[:T]/g, '-').slice(0, 19);
+  link.download = `鸣潮声骸记录_${stamp}.png`;
+  link.href = url;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
 async function preprocessImage(file){const bitmap=await createImageBitmap(file),width=bitmap.width,height=bitmap.height,shortest=Math.min(width,height),longest=Math.max(width,height);let scale=1;if(shortest<720)scale=Math.min(3.2,720/Math.max(1,shortest));if(longest*scale>1900)scale=1900/longest;const padding=Math.max(20,Math.round(24*scale)),canvas=document.createElement('canvas');canvas.width=Math.round(width*scale)+padding*2;canvas.height=Math.round(height*scale)+padding*2;const ctx=canvas.getContext('2d',{alpha:false});ctx.fillStyle='#101a25';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(bitmap,padding,padding,Math.round(width*scale),Math.round(height*scale));bitmap.close();return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('图片转换失败')),'image/png',1))}
 function ocrConfig(){return{detModelUrl:new URL('./models/PP-OCRv5_mobile_det_onnx_infer.tar',location.href).href,recModelUrl:new URL('./models/PP-OCRv5_mobile_rec_onnx_infer.tar',location.href).href,wasmBaseUrl:new URL('./assets/',location.href).href}}
 function postOcr(message,transfers=[]){dom.ocrFrame.contentWindow?.postMessage(message,'*',transfers)}
 function updateRecognitionButtons(){const busy=state.initializingOcr||state.pendingRun||state.recognizing;dom.stopRecognition.disabled=!busy;dom.recognizeAgain.disabled=!state.imageFile||busy;dom.recognizeTop.disabled=!state.imageFile||busy}
+
+function fitPreviewImage(width, height) {
+  if (!(width > 0) || !(height > 0)) return;
+  const scale = Math.min(1, 320 / width, 220 / height);
+  dom.previewImage.style.width = `${width * scale}px`;
+  dom.previewImage.style.height = `${height * scale}px`;
+}
+
 async function acceptImage(file, name = file?.name || '剪贴板图片') {
   if (!file || !file.type.startsWith('image/')) {
     setRecognitionState('请选择图片', 'error');
@@ -16,6 +155,7 @@ async function acceptImage(file, name = file?.name || '剪贴板图片') {
   state.imageFile = file;
   state.imageUrl = URL.createObjectURL(file);
   state.imageName = name;
+  dom.previewImage.style.visibility = 'hidden';
   dom.previewImage.src = state.imageUrl;
   dom.previewWrap.classList.remove('empty');
 
@@ -24,10 +164,20 @@ async function acceptImage(file, name = file?.name || '剪贴板图片') {
     state.imageWidth = bitmap.width;
     state.imageHeight = bitmap.height;
     bitmap.close();
+    fitPreviewImage(state.imageWidth, state.imageHeight);
     dom.imageMeta.textContent = `${name} · ${state.imageWidth} × ${state.imageHeight}`;
   } catch {
-    dom.imageMeta.textContent = name;
+    try {
+      await dom.previewImage.decode();
+      state.imageWidth = dom.previewImage.naturalWidth;
+      state.imageHeight = dom.previewImage.naturalHeight;
+      fitPreviewImage(state.imageWidth, state.imageHeight);
+      dom.imageMeta.textContent = `${name} · ${state.imageWidth} × ${state.imageHeight}`;
+    } catch {
+      dom.imageMeta.textContent = name;
+    }
   }
+  dom.previewImage.style.visibility = 'visible';
 
   updateRecognitionButtons();
   await runRecognition();

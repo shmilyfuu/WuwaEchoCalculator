@@ -223,13 +223,14 @@ function initialize() {
   setupOcrMessages();
   setupHostActions();
   setupConfirmDialog();
+  setupExportDialog();
   dom.slotSelect.addEventListener('change', () => selectSlot(Number(dom.slotSelect.value)));
   dom.recognizeAgain.addEventListener('click', runRecognition);
   dom.recognizeTop.addEventListener('click', runRecognition);
   dom.stopRecognition.addEventListener('click', stopRecognition);
   dom.confirmRecord.addEventListener('click', confirmRecord);
   dom.clearAll.addEventListener('click', clearAll);
-  dom.exportRecords.addEventListener('click', exportRecordsImage);
+  dom.exportRecords.addEventListener('click', requestExportRecords);
   setModelStatus('正在准备本地 PaddleOCR 模型', 'loading');
   updateRecognitionButtons();
 }

@@ -13,6 +13,7 @@ using Microsoft::WRL::ComPtr;
 namespace {
 HWND g_window = nullptr;
 ComPtr<ICoreWebView2Controller> g_controller;
+ComPtr<ICoreWebView2Controller3> g_controller3;
 ComPtr<ICoreWebView2> g_webview;
 EventRegistrationToken g_messageToken{};
 std::wstring g_exeDir;
@@ -60,6 +61,11 @@ void ResizeWebView() {
     g_controller->put_Bounds(bounds);
 }
 
+void ApplyWebViewDpiScale(UINT dpi) {
+    if (!g_controller3) return;
+    g_controller3->put_RasterizationScale(static_cast<double>(dpi) / 96.0);
+}
+
 void SetTopmost(bool enabled) {
     if (!g_window) return;
     SetWindowPos(g_window, enabled ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
@@ -105,6 +111,15 @@ void InitializeWebView() {
                             g_controller = controller;
                             controller->get_CoreWebView2(&g_webview);
                             if (!g_webview) return E_FAIL;
+
+                            if (FAILED(g_controller.As(&g_controller3)) || !g_controller3) {
+                                MessageBoxW(g_window, L"当前 WebView2 Runtime 版本过旧，请更新 Microsoft Edge WebView2 Runtime。", kWindowTitle, MB_OK | MB_ICONERROR);
+                                return E_NOINTERFACE;
+                            }
+                            g_controller3->put_ShouldDetectMonitorScaleChanges(FALSE);
+                            g_controller3->put_BoundsMode(COREWEBVIEW2_BOUNDS_MODE_USE_RAW_PIXELS);
+                            ApplyWebViewDpiScale(GetDpiForWindow(g_window));
+                            g_controller->put_ZoomFactor(1.0);
 
                             ComPtr<ICoreWebView2Controller2> controller2;
                             if (SUCCEEDED(g_controller.As(&controller2))) {
@@ -180,15 +195,19 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     }
     case WM_DPICHANGED: {
         const RECT* suggested = reinterpret_cast<RECT*>(lParam);
-        const SIZE size = WindowSizeForDpi(HIWORD(wParam));
+        const UINT dpi = HIWORD(wParam);
+        const SIZE size = WindowSizeForDpi(dpi);
         SetWindowPos(hwnd, nullptr, suggested->left, suggested->top, size.cx, size.cy,
                      SWP_NOZORDER | SWP_NOACTIVATE);
+        ApplyWebViewDpiScale(dpi);
+        ResizeWebView();
         return 0;
     }
     case WM_DESTROY:
         if (g_webview) g_webview->remove_WebMessageReceived(g_messageToken);
         if (g_controller) g_controller->Close();
         g_webview.Reset();
+        g_controller3.Reset();
         g_controller.Reset();
         PostQuitMessage(0);
         return 0;
