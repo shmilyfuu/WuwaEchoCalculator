@@ -455,6 +455,9 @@ function showExportTitleDialog() {
 
 function setupExportDialog() {
   dom.exportTitleInput.addEventListener('input', updateExportTitleValidation);
+  document.addEventListener('contextmenu', event => {
+    if (event.target !== dom.exportTitleInput) event.preventDefault();
+  });
   dom.exportAccept.addEventListener('click', submitExportDialog);
   dom.exportCancel.addEventListener('click', () => closeExportDialog(null));
   dom.exportOverlay.addEventListener('click', event => {
@@ -475,8 +478,10 @@ async function requestExportRecords() {
   const title = await showExportTitleDialog();
   if (title === null) return;
   try {
+    const usesNativeSaveDialog = Boolean(window.chrome?.webview);
+    setStatus(usesNativeSaveDialog ? '请选择导出图片的保存位置' : '正在下载记录图片', 'loading');
     await exportRecordsImage(title);
-    setStatus('记录图片已导出', 'success');
+    if (!usesNativeSaveDialog) setStatus('记录图片下载已开始', 'success');
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error), 'error');
   }
