@@ -33,6 +33,7 @@ jobs:
           python scripts/patch_native_ocr.py
           python scripts/patch_ocr_engine.py
           python scripts/patch_native_runtime_fixes.py
+          python scripts/patch_native_export_figma.py
           python scripts/generate_ocr_smoke_image.py
 
       - name: Install ONNX Runtime SDK
@@ -102,6 +103,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "PNG export smoke test failed with exit code $LASTEXITCODE" }
           if (-not (Test-Path $output)) { throw 'PNG smoke output was not created' }
           if ((Get-Item $output).Length -lt 1024) { throw 'PNG smoke output is unexpectedly small' }
+          $generated = Get-Content 'native\app_release.cpp' -Raw
+          if ($generated.Contains('DrawIcon(rt,iconStar_.Get(),Rect(x+18,ry+7,11,11));')) { throw 'Export renderer still references a window-target bitmap' }
 
       - name: Assemble preview package
         shell: pwsh
@@ -115,12 +118,12 @@ jobs:
           鸣潮声骸计算器 Direct2D 原生 OCR 预览
 
           本次修正：
-          - 修复 PP-OCRv5 识别结果被重复 Softmax 后全部过滤的问题。
-          - 检测尺寸、阈值和文字框展开参数与 WebView2 正式版对齐。
-          - 导出输入框的真实控件缩进到 Direct2D 外框内部，避免覆盖圆角与底线。
-          - PNG 导出增加显式像素格式转换和逐步错误检查。
-          - 保存失败时状态栏显示具体失败环节。
-          - 构建流程加入 PP-OCRv5 推理和 WIC PNG 落盘自测。
+          - 导出绘制不再跨绘制目标复用窗口图标位图。
+          - 导出弹窗按照 Figma 的 384×198 布局重新校准。
+          - 输入框采用 336×32 外观，真实输入区限定在内部文字区域。
+          - 长度提示仅在标题超过 12 个字符时显示，恢复到限制内后立即隐藏。
+          - 导出绘制失败时显示 Direct2D HRESULT。
+          - 保留 PP-OCRv5 推理和 WIC PNG 落盘自测。
 
           已有功能：
           - 使用 PP-OCRv5 检测与识别 ONNX 模型在本机处理图片。
