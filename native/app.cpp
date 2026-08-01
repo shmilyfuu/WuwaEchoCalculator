@@ -19,6 +19,20 @@ std::wstring g_exeDir;
 
 constexpr wchar_t kWindowClass[] = L"WuwaEchoCalculatorWindow";
 constexpr wchar_t kWindowTitle[] = L"鸣潮声骸计算器";
+constexpr int kClientWidthDips = 1188;
+constexpr int kClientHeightDips = 772;
+constexpr DWORD kWindowStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
+
+SIZE WindowSizeForDpi(UINT dpi) {
+    RECT rect{
+        0,
+        0,
+        MulDiv(kClientWidthDips, static_cast<int>(dpi), 96),
+        MulDiv(kClientHeightDips, static_cast<int>(dpi), 96)
+    };
+    AdjustWindowRectExForDpi(&rect, kWindowStyle, FALSE, 0, dpi);
+    return SIZE{rect.right - rect.left, rect.bottom - rect.top};
+}
 
 std::wstring GetExecutableDirectory() {
     wchar_t path[MAX_PATH]{};
@@ -157,14 +171,17 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         return 0;
     case WM_GETMINMAXINFO: {
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
-        info->ptMinTrackSize.x = 1400;
-        info->ptMinTrackSize.y = 860;
+        const SIZE size = WindowSizeForDpi(GetDpiForWindow(hwnd));
+        info->ptMinTrackSize.x = size.cx;
+        info->ptMinTrackSize.y = size.cy;
+        info->ptMaxTrackSize.x = size.cx;
+        info->ptMaxTrackSize.y = size.cy;
         return 0;
     }
     case WM_DPICHANGED: {
         const RECT* suggested = reinterpret_cast<RECT*>(lParam);
-        SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
-                     suggested->right - suggested->left, suggested->bottom - suggested->top,
+        const SIZE size = WindowSizeForDpi(HIWORD(wParam));
+        SetWindowPos(hwnd, nullptr, suggested->left, suggested->top, size.cx, size.cy,
                      SWP_NOZORDER | SWP_NOACTIVATE);
         return 0;
     }
@@ -203,19 +220,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return 1;
     }
 
-    const int width = 1540;
-    const int height = 940;
-    const int x = max(0, (GetSystemMetrics(SM_CXSCREEN) - width) / 2);
-    const int y = max(0, (GetSystemMetrics(SM_CYSCREEN) - height) / 2);
+    const SIZE windowSize = WindowSizeForDpi(GetDpiForSystem());
+    const int x = max(0, (GetSystemMetrics(SM_CXSCREEN) - windowSize.cx) / 2);
+    const int y = max(0, (GetSystemMetrics(SM_CYSCREEN) - windowSize.cy) / 2);
 
-    HWND hwnd = CreateWindowExW(0, kWindowClass, kWindowTitle, WS_OVERLAPPEDWINDOW,
-                                x, y, width, height, nullptr, nullptr, instance, nullptr);
+    HWND hwnd = CreateWindowExW(0, kWindowClass, kWindowTitle, kWindowStyle,
+                                x, y, windowSize.cx, windowSize.cy, nullptr, nullptr, instance, nullptr);
     if (!hwnd) {
         CoUninitialize();
         return 1;
     }
 
-    ShowWindow(hwnd, showCommand);
+    ShowWindow(hwnd, showCommand == SW_SHOWMINIMIZED ? SW_SHOWMINIMIZED : SW_SHOWNORMAL);
     UpdateWindow(hwnd);
 
     MSG message{};
