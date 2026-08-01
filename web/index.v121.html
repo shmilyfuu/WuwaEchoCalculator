@@ -130,7 +130,16 @@
     </footer>
   </div>
 
+  <div class="compat-status" aria-hidden="true">
+    <span id="recognitionState" class="status-badge idle">等待图片</span>
+    <span id="imageMeta">尚未导入图片</span>
+    <span id="recordHint">识别后请核对五条属性，再写入对应位置。</span>
+    <span id="modelDot" class="model-dot loading"></span>
+    <span id="modelStatus">正在准备本地 PaddleOCR 模型</span>
+    <span id="runtimeInfo">本地识别 · 图片不会上传</span>
+  </div>
   <iframe id="ocrFrame" src="./ocr-sandbox.html" title="OCR 处理区" hidden></iframe>
   <script type="module" src="./app.js"></script>
+  <script type="module" src="./status-bridge.v121.js"></script>
 </body>
 </html>
