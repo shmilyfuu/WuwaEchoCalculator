@@ -11,4 +11,4 @@ inline int max(int left, LONG right) noexcept {
 
 #undef DrawText
 #define DrawTextW DrawText
-#include "app.cpp"
+#include "app_generated.cpp"
