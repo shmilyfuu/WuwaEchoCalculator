@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -24,13 +24,16 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Prepare generated sources and icon
+      - name: Prepare generated sources, icon and OCR fixture
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check pillow pyyaml
           python scripts/generate_icon.py
           python scripts/patch_native_ui.py
           python scripts/patch_native_ocr.py
+          python scripts/patch_ocr_engine.py
+          python scripts/patch_native_runtime_fixes.py
+          python scripts/generate_ocr_smoke_image.py
 
       - name: Install ONNX Runtime SDK
         shell: pwsh
@@ -47,7 +50,7 @@ jobs:
           curl.exe -L --fail --retry 4 --retry-delay 3 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml?download=true' -o "$models\rec.yml"
           python scripts/extract_ocr_dict.py "$models\rec.yml" "$models\dict.txt"
 
-      - name: Compile native Direct2D application
+      - name: Compile native application and OCR smoke test
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -72,11 +75,22 @@ jobs:
           if errorlevel 1 exit /b 1
           mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoCalculatorNative.exe";#1
           if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" ocr_smoke_test.cpp ocr_build_entry.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\ocr_smoke_test.exe" /LIBPATH:"$ortNative" onnxruntime.lib windowscodecs.lib ole32.lib user32.lib gdi32.lib uuid.lib
+          if errorlevel 1 exit /b 1
           "@
           Set-Content 'build-native.cmd' $batch -Encoding ASCII
           cmd.exe /d /c build-native.cmd
           if ($LASTEXITCODE -ne 0) { throw "Native build failed with exit code $LASTEXITCODE" }
           if (-not (Test-Path "$out\WuwaEchoCalculatorNative.exe")) { throw 'Native EXE was not created' }
+          Copy-Item "$ortNative\*.dll" $out -Force
+
+      - name: Run PP-OCRv5 smoke test
+        shell: pwsh
+        run: |
+          $models = Resolve-Path 'build-models'
+          $image = Resolve-Path 'build-tests\ocr_smoke.png'
+          & 'build-native\ocr_smoke_test.exe' $models $image
+          if ($LASTEXITCODE -ne 0) { throw "OCR smoke test failed with exit code $LASTEXITCODE" }
 
       - name: Assemble preview package
         shell: pwsh
@@ -90,20 +104,19 @@ jobs:
           鸣潮声骸计算器 Direct2D 原生 OCR 预览
 
           本次修正：
-          - 使用正式版下拉箭头、词条星形和识别状态图标。
-          - 校正当前统计文字、数值和按钮的位置。
-          - 修正置顶开关显示位置与点击区域。
-          - 弹窗上下区域改为无重叠拼接，确认按钮统一使用蓝色。
-          - 导出标题输入框改为深色真实输入层叠加 Direct2D 外观。
-          - 恢复“请输入标题（可选）”占位提示，长度提示常驻显示。
+          - 修复 PP-OCRv5 识别结果被重复 Softmax 后全部过滤的问题。
+          - 检测尺寸、阈值和文字框展开参数与 WebView2 正式版对齐。
+          - 导出输入框的真实控件缩进到 Direct2D 外框内部，避免覆盖圆角与底线。
+          - PNG 导出增加显式像素格式转换和逐步错误检查。
+          - 保存失败时状态栏显示具体失败环节。
+          - 构建流程加入 PP-OCRv5 实际推理自测。
 
-          OCR 试验功能：
+          已有功能：
           - 使用 PP-OCRv5 检测与识别 ONNX 模型在本机处理图片。
           - 导入、拖入或粘贴图片后自动识别。
           - 支持停止识别与重新识别。
           - 识别结果会自动匹配声骸属性与档位，仍需人工核对。
 
-          当前属于首轮原生 OCR 验证，检测框采用轻量轴对齐后处理，复杂裁切或倾斜图片可能漏识别。
           请保留 models 目录和 ONNX Runtime DLL，不要单独移动 EXE。
           '@ | Set-Content "$folder\原生迁移说明.txt" -Encoding UTF8
           Compress-Archive -Path $folder -DestinationPath 'artifact\鸣潮声骸计算器_Direct2D原生OCR预览.zip' -CompressionLevel Optimal
