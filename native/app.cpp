@@ -1,5 +1,6 @@
 #define UNICODE
 #define _UNICODE
+#define NOMINMAX
 #include <windows.h>
 #include <windowsx.h>
 #include <d2d1.h>
@@ -307,7 +308,7 @@ private:
 
     void UpdateEditFont() {
         if (editFont_) DeleteObject(editFont_);
-        const int height = -MulDiv(14, static_cast<int>(dpi_), 72);
+        const int height = -MulDiv(14, static_cast<int>(dpi_), 96);
         editFont_ = CreateFontW(height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
@@ -798,12 +799,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam){
     case WM_MOUSEWHEEL:{POINT pt{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};ScreenToClient(hwnd,&pt);const float scale=96.0f/GetDpiForWindow(hwnd);g_app->MouseWheel(pt.x*scale,pt.y*scale,GET_WHEEL_DELTA_WPARAM(wParam));return 0;}
     case WM_KEYDOWN:g_app->KeyDown(wParam);return 0;
     case WM_DROPFILES:g_app->DropFiles(reinterpret_cast<HDROP>(wParam));return 0;
-    case WM_SETCURSOR:SetCursor(LoadCursorW(nullptr,IDC_ARROW));return TRUE;
+    case WM_SETCURSOR:if(LOWORD(lParam)==HTCLIENT){SetCursor(LoadCursorW(nullptr,IDC_ARROW));return TRUE;}break;
     case WM_CTLCOLOREDIT:return reinterpret_cast<LRESULT>(g_app->EditColor(reinterpret_cast<HDC>(wParam)));
     case WM_COMMAND:if(LOWORD(wParam)==kEditId&&HIWORD(wParam)==EN_CHANGE)g_app->EditChanged();return 0;
     case WM_DESTROY:delete g_app;g_app=nullptr;PostQuitMessage(0);return 0;
     default:return DefWindowProcW(hwnd,msg,wParam,lParam);
     }
+    return DefWindowProcW(hwnd,msg,wParam,lParam);
 }
 }
 
