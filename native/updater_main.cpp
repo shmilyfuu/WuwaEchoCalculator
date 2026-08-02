@@ -74,7 +74,7 @@ std::wstring PreviewArgument() {
 
 void ApplyPreviewState(const std::wstring& state) {
     if (state == L"updater-waiting") g_state = {4,L"正在等待计算器退出",L"",false,false};
-    else if (state == L"updater-preparing") g_state = {10,L"正在准备更新文件",L"WuwaEchoCalculator-v1.3.3-windows-x64.zip",false,false};
+    else if (state == L"updater-preparing") g_state = {10,L"正在准备更新文件",L"WuwaEchoCalculator-v1.3.4-windows-x64.zip",false,false};
     else if (state == L"updater-checking") g_state = {22,L"正在检查更新文件",L"",false,false};
     else if (state == L"updater-backup") g_state = {26,L"正在备份当前版本",L"",false,false};
     else if (state == L"updater-replacing") g_state = {64,L"正在替换程序文件",L"models\\rec.onnx",false,false};

@@ -282,7 +282,7 @@ bool OpenRequest(const std::wstring& url, InternetHandle& session, InternetHandl
                  InternetHandle& request, std::wstring& error) {
     NativeHttpUrlParts parts;
     if (!ParseHttpUrl(url, parts, error)) return false;
-    session = InternetHandle(WinHttpOpen(L"WuwaEchoCalculator-Updater/1.3.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    session = InternetHandle(WinHttpOpen(L"WuwaEchoCalculator-Updater/1.3.3", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!session) { error = L"初始化网络组件失败：" + ErrorText(GetLastError()); return false; }
     WinHttpSetTimeouts(session.value, 10000, 10000, 15000, 120000);

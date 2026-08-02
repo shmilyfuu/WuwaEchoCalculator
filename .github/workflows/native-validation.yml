@@ -88,7 +88,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "compile failed: $LASTEXITCODE" }
           Copy-Item "$ortNative\*.dll" $out -Force
 
-      - name: Run v1.3.2 regressions and package
+      - name: Run v1.3.3 regressions and package
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -105,20 +105,26 @@ jobs:
           if (-not $generated.Contains('WICConvertBitmapSource')) { throw 'PNG conversion correction is missing' }
           if (-not $generated.Contains('ocrRunning_=true;rows_={};rowConfidence_.fill(0)')) { throw 'OCR transient state correction is missing' }
           if (-not $generated.Contains('selectedSlot_=0;status_=L"已清空全部记录"')) { throw 'Clear-all target reset is missing' }
-          if (-not $generated.Contains('kAppVersion[] = L"1.3.2"')) { throw 'Application version is not v1.3.2' }
+          if (-not $generated.Contains('kAppVersion[] = L"1.3.3"')) { throw 'Application version is not v1.3.3' }
           if (-not $generated.Contains('enum class StatusLevel { Normal, Attention, Error }')) { throw 'Three-level status indicator is missing' }
+          if (-not $generated.Contains('UpdateNotesMaximumScroll')) { throw 'Scrollable dynamic release notes are missing' }
+          if ($generated.Contains('下载来源：') -or $generated.Contains('L"来源："')) { throw 'Static update source labels are still present' }
+          if (-not $generated.Contains('Rect(x,contentTop+66,412,30)')) { throw 'Download progress bar is not 30px high' }
+          $manager = Get-Content native\update_manager.cpp -Raw
+          if (-not $manager.Contains('info.notes = JsonStringField(body, L"body")')) { throw 'Release notes are not read from the release body' }
           $updater = Get-Content native\updater_main.cpp -Raw
           if ($updater.Contains('MessageBoxW')) { throw 'System updater error dialog is still present' }
           if (-not $updater.Contains('WuwaEchoUpdaterFailureWindow')) { throw 'Custom updater failure dialog is missing' }
+          if (-not $updater.Contains('RECT track{24,96,client.right-24,126}')) { throw 'Updater progress bar is not 30px high' }
 
-          $folder = 'artifact\鸣潮声骸计算器_v1.3.2'
+          $folder = 'artifact\鸣潮声骸计算器_v1.3.3'
           New-Item -ItemType Directory -Force "$folder\models", "$folder\data", "$folder\updates" | Out-Null
           Copy-Item build-native\WuwaEchoCalculator.exe "$folder\鸣潮声骸计算器.exe"
           Copy-Item build-native\WuwaEchoUpdater.exe "$folder\WuwaEchoUpdater.exe"
           Copy-Item build-native\onnxruntime*.dll $folder
           Copy-Item build-models\det.onnx,build-models\rec.onnx,build-models\dict.txt "$folder\models"
           @'
-          鸣潮声骸计算器 v1.3.2
+          鸣潮声骸计算器 v1.3.3
 
           - 按统一规范调整确认、导出和更新弹窗布局。
           - 优化导出标题输入框高亮与超限提示。
@@ -128,14 +134,14 @@ jobs:
 
           请保留 models 目录、WuwaEchoUpdater.exe 和 ONNX Runtime DLL。
           '@ | Set-Content "$folder\版本说明.txt" -Encoding UTF8
-          Compress-Archive -Path $folder -DestinationPath artifact\WuwaEchoCalculator-v1.3.2-windows-x64.zip -CompressionLevel Optimal
-          $hash = (Get-FileHash artifact\WuwaEchoCalculator-v1.3.2-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  WuwaEchoCalculator-v1.3.2-windows-x64.zip" | Set-Content artifact\WuwaEchoCalculator-v1.3.2-windows-x64.zip.sha256 -Encoding ASCII
+          Compress-Archive -Path $folder -DestinationPath artifact\WuwaEchoCalculator-v1.3.3-windows-x64.zip -CompressionLevel Optimal
+          $hash = (Get-FileHash artifact\WuwaEchoCalculator-v1.3.3-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  WuwaEchoCalculator-v1.3.3-windows-x64.zip" | Set-Content artifact\WuwaEchoCalculator-v1.3.3-windows-x64.zip.sha256 -Encoding ASCII
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wuwa-echo-calculator-v1.3.2-validation
+          name: wuwa-echo-calculator-v1.3.3-validation
           path: |
-            artifact/WuwaEchoCalculator-v1.3.2-windows-x64.zip
-            artifact/WuwaEchoCalculator-v1.3.2-windows-x64.zip.sha256
+            artifact/WuwaEchoCalculator-v1.3.3-windows-x64.zip
+            artifact/WuwaEchoCalculator-v1.3.3-windows-x64.zip.sha256
           retention-days: 7

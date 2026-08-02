@@ -63,7 +63,7 @@ LRESULT CALLBACK ExportEditProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
 }
 constexpr wchar_t kWindowClass[] = L"WuwaEchoCalculatorNativeWindow";
 constexpr wchar_t kWindowTitle[] = L"鸣潮声骸计算器";
-constexpr wchar_t kAppVersion[] = L"1.3.2";
+constexpr wchar_t kAppVersion[] = L"1.3.3";
 constexpr float kClientWidth = 1188.0f;
 constexpr float kClientHeight = 772.0f;
 constexpr DWORD kWindowStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
@@ -512,21 +512,21 @@ private:
         } else if (state == L"update-available" || state == L"update-available-long" || state == L"update-available-long-bottom") {
             std::wstring notes=L"- 优化更新流程界面\n- 修复已知问题\n- 提升本地识别稳定性";
             if(state==L"update-available-long"||state==L"update-available-long-bottom"){
-                notes=L"# 鸣潮声骸计算器 v1.3.3\n\n- 更新日志根据 Release 正文动态测量，不再使用固定高度。";
+                notes=L"# 鸣潮声骸计算器 v1.3.4\n\n- 更新日志根据 Release 正文动态测量，不再使用固定高度。";
                 for(int line=1;line<=32;++line)notes+=L"\n- 滚动验证项目 "+std::to_wstring(line)+L"：长更新说明不会被静默裁切。";
                 notes+=L"\n- 完整说明最后一行应能通过滚动查看。";
             }
             updateState_.phase = NativeUpdatePhase::Available;
-            updateState_.latest = {true,L"1.3.3",L"v1.3.3",L"鸣潮声骸计算器 v1.3.3",
+            updateState_.latest = {true,L"1.3.4",L"v1.3.4",L"鸣潮声骸计算器 v1.3.4",
                 notes,L"Gitee"};
             updateNotesScroll_=state==L"update-available-long-bottom"?4096.0f:0.0f;
             modal_ = ModalKind::UpdateAvailable;
             statusLevel_ = StatusLevel::Attention;
-            status_ = L"发现新版本 v1.3.3";
+            status_ = L"发现新版本 v1.3.4";
         } else if (state == L"update-preparing") {
             updateBusy_ = true;
             updateState_.phase = NativeUpdatePhase::Preparing;
-            updateState_.latest.version = L"1.3.3";
+            updateState_.latest.version = L"1.3.4";
             updateState_.latest.source = L"Gitee";
             updateState_.message = L"正在准备更新包";
             modal_ = ModalKind::UpdateProgress;
@@ -535,7 +535,7 @@ private:
         } else if (state == L"update-downloading") {
             updateBusy_ = true;
             updateState_.phase = NativeUpdatePhase::Downloading;
-            updateState_.latest.version = L"1.3.3";
+            updateState_.latest.version = L"1.3.4";
             updateState_.latest.source = L"Gitee";
             updateState_.message = L"正在下载更新包";
             updateState_.downloadedBytes = 48234496;
@@ -547,7 +547,7 @@ private:
         } else if (state == L"update-verifying") {
             updateBusy_ = true;
             updateState_.phase = NativeUpdatePhase::Verifying;
-            updateState_.latest.version = L"1.3.3";
+            updateState_.latest.version = L"1.3.4";
             updateState_.latest.source = L"Gitee";
             updateState_.message = L"正在校验更新包";
             updateState_.downloadedBytes = 86507520;
@@ -558,7 +558,7 @@ private:
         } else if (state == L"update-fallback") {
             updateBusy_ = true;
             updateState_.phase = NativeUpdatePhase::Preparing;
-            updateState_.latest.version = L"1.3.3";
+            updateState_.latest.version = L"1.3.4";
             updateState_.latest.source = L"GitHub";
             updateState_.message = L"Gitee 下载失败，正在切换到 GitHub";
             modal_ = ModalKind::UpdateProgress;
@@ -567,14 +567,14 @@ private:
         } else if (state == L"update-ready") {
             updateReady_ = true;
             updateState_.phase = NativeUpdatePhase::Ready;
-            updateState_.latest.version = L"1.3.3";
+            updateState_.latest.version = L"1.3.4";
             modal_ = ModalKind::UpdateReady;
             statusLevel_ = StatusLevel::Normal;
             status_ = L"更新包已准备完成";
         } else if (state == L"update-ready-deferred") {
             updateReady_ = true;
             updateState_.phase = NativeUpdatePhase::Ready;
-            updateState_.latest.version = L"1.3.3";
+            updateState_.latest.version = L"1.3.4";
             statusLevel_ = StatusLevel::Attention;
             status_ = L"更新包已保留，可稍后安装";
         } else if (state == L"update-latest") {

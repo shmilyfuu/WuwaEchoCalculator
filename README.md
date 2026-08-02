@@ -1,6 +1,6 @@
 # WuwaEchoCalculator
 
-鸣潮声骸截图识别与活动计分工具。当前版本为 **v1.3.2**，主程序采用 Win32、Direct2D、DirectWrite、WIC 与 ONNX Runtime，PP-OCRv5 在本机完成图片识别。
+鸣潮声骸截图识别与活动计分工具。当前版本为 **v1.3.3**，主程序采用 Win32、Direct2D、DirectWrite、WIC 与 ONNX Runtime，PP-OCRv5 在本机完成图片识别。
 
 ## 功能
 
@@ -13,6 +13,18 @@
 
 ## 更新
 
+### v1.3.3
+
+- 更新日志动态读取 Release 正文，短内容自动收缩，长内容支持独立滚动，不再被固定区域裁切。
+- 下载与安装进度条统一为 30px 高、3px 圆角，并按 24px 弹窗规范重新布局。
+- 移除固定更新来源标注，仅在 Gitee 下载失败并切换 GitHub 时显示过程提示。
+- 检查两端版本并选择较新版本；同版本优先 Gitee，GitHub 作为备用来源。
+- 已下载更新包在重新启动后保持待安装状态，直接显示“更新已准备完成”。
+- “已是最新”、更新失败与准备完成弹窗根据内容重新计算尺寸。
+
+<details>
+<summary>历史更新</summary>
+
 ### v1.3.2
 
 - 按统一的 24px 内容边距和按钮规范调整确认、导出与更新弹窗。
@@ -21,9 +33,6 @@
 - 更新助手进度条改为 3px 圆角，并使用自定义更新失败弹窗。
 - 更新前严格确认计算器已经退出，失败后保留更新包供重新启动后继续安装。
 - 增加单实例限制，避免多个计算器进程占用更新文件。
-
-<details>
-<summary>历史更新</summary>
 
 ### v1.3.1
 
@@ -42,6 +51,6 @@
 
 - `.github/workflows/build.yml`：构建与回归测试。
 - `.github/workflows/native-validation.yml`：原生实现验证。
-- `.github/workflows/publish-v132.yml`：v1.3.2 发布。
+- `.github/workflows/publish-v133.yml`：v1.3.3 发布。
 
 旧 WebView2 版本保存在分支 `backup/main-webview2-v1.2.2-20260802`。
