@@ -60,17 +60,13 @@ int wmain(int argc, wchar_t** argv) {
 
         WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
         if (SUCCEEDED(hr)) hr = frame->SetPixelFormat(&format);
-        ComPtr<IWICFormatConverter> converter;
-        if (SUCCEEDED(hr)) hr = wic->CreateFormatConverter(converter.GetAddressOf());
-        if (SUCCEEDED(hr)) {
-            hr = converter->Initialize(bitmap.Get(), format, WICBitmapDitherTypeNone,
-                                       nullptr, 0.0, WICBitmapPaletteTypeCustom);
-        }
-        if (SUCCEEDED(hr)) hr = frame->WriteSource(converter.Get(), nullptr);
+        ComPtr<IWICBitmapSource> encoderSource;
+        if (SUCCEEDED(hr)) hr = WICConvertBitmapSource(format, bitmap.Get(), encoderSource.GetAddressOf());
+        if (SUCCEEDED(hr)) hr = frame->WriteSource(encoderSource.Get(), nullptr);
         if (SUCCEEDED(hr)) hr = frame->Commit();
         if (SUCCEEDED(hr)) hr = encoder->Commit();
 
-        frame.Reset(); converter.Reset(); encoder.Reset(); stream.Reset(); bitmap.Reset();
+        frame.Reset(); encoderSource.Reset(); encoder.Reset(); stream.Reset(); bitmap.Reset();
         if (SUCCEEDED(hr) && std::filesystem::exists(argv[1]) &&
             std::filesystem::file_size(argv[1]) > 1024) {
             std::wcout << L"png_size=" << std::filesystem::file_size(argv[1]) << L"\n";
