@@ -1,27 +1,24 @@
 # WuwaEchoCalculator
 
-鸣潮声骸截图识别与活动计分工具。应用使用 Windows WebView2 独立窗口，内置 PP-OCRv5 模型，图片只在本机完成识别。
-
-当前版本：v1.2.1。
+鸣潮声骸截图识别与活动计分工具。当前版本为 **v1.3.1**，主程序采用 Win32、Direct2D、DirectWrite、WIC 与 ONNX Runtime，PP-OCRv5 在本机完成图片识别。
 
 ## 功能
 
-- 支持点击、拖拽和 `Ctrl+V` 粘贴声骸截图。
-- 本地识别五条辅音属性，并按合法档位进行校验。
-- 支持手动修正属性和档位。
-- 记录五件声骸，显示单项分数、小计、总分和平均分。
+- 支持点击选择、全窗口拖拽和 `Ctrl+V` 粘贴声骸截图。
+- 自动识别五条辅音属性与档位，并支持手动修正。
+- 记录五件声骸，动态显示单项分数、小计、总分和平均分。
 - 支持编辑、删除、覆盖、清空和导出 PNG。
-- 支持停止当前识别并重新初始化 OCR。
-- 数据保存在程序目录下的本地 WebView2 数据目录中。
-
-## 界面
-
-- WebView 客户区域固定为 `1188 × 772` 逻辑像素。
-- 保留 Windows 原生标题栏、最小化和关闭按钮。
-- 禁止最大化及拖拽调整窗口尺寸。
-- 主操作色为 `#4CC2FF`，正常状态为 `#6CCB5F`，中间状态为 `#FCE100`，错误状态为 `#FF99A4`。
-- 清空、覆盖和删除操作使用统一的自定义确认弹窗。
+- 支持中止当前识别，以及 Gitee 优先、GitHub 回退的应用更新。
+- 图片与记录只在本机处理和保存。
 
 ## 构建
 
-网页资源使用 Vite 构建，Windows 宿主使用 C++17、Win32 和 Microsoft Edge WebView2 SDK。正式便携包由 GitHub Actions 的 `build.yml` 生成。
+正式 Windows 便携包由 GitHub Actions 构建。主程序直接编译 `native/` 下的权威 C++ 源码；Python 仅用于生成图标、OCR 测试图片，以及从模型配置提取识别字典，不参与业务源码生成。
+
+主要工作流：
+
+- `.github/workflows/build.yml`：构建与回归测试。
+- `.github/workflows/native-validation.yml`：原生实现验证。
+- `.github/workflows/publish-v131.yml`：v1.3.1 发布。
+
+旧 WebView2 版本保存在分支 `backup/main-webview2-v1.2.2-20260802`。

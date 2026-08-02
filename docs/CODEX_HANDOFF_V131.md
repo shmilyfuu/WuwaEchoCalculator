@@ -137,19 +137,13 @@ WIC 图片读取与导出
 窗口消息入口
 ```
 
-需要特别注意：当前正式构建并未直接编译 `native/app.cpp`。构建脚本会连续执行多个 Python 补丁，最终生成：
-
-```text
-native/app_v131.cpp
-```
-
-编译入口 `native/build_entry.cpp` 最后一行包含：
+正式构建直接编译 `native/app.cpp`。编译入口 `native/build_entry.cpp` 最后一行包含：
 
 ```cpp
-#include "app_v131.cpp"
+#include "app.cpp"
 ```
 
-因此，直接修改 `app_v131.cpp` 会在下一次构建时被脚本覆盖。短期修改可以继续追加补丁脚本；长期整理建议把最终结果合并成一份权威源文件，屏幕上会少掉一长串“Generated native\...”输出，后续定位会更清楚。
+历史多层 Python 补丁已经收敛回权威 C++ 源码。界面修改应直接编辑 `native/app.cpp`，不再生成 `app_v131.cpp` 等中间文件。
 
 ### 4.2 OCR 引擎
 
@@ -189,7 +183,7 @@ onnxruntime.dll
 onnxruntime_providers_shared.dll
 ```
 
-当前图片预处理逻辑位于 `scripts/patch_ocr_engine_main_parity.py`。主要参数如下：
+当前图片预处理逻辑位于 `native/ocr_engine.cpp`。主要参数如下：
 
 ```text
 短边低于 720 时放大
@@ -274,69 +268,33 @@ WuwaEchoCalculator-v{版本}-windows-x64.zip.sha256
 
 压缩包上限为 200 MiB。`data` 与 `updates` 目录需要在更新替换时继续保留，窗口里能看到下载进度、文件大小、速度、来源和校验状态。
 
-## 5. 当前生成链
+## 5. 当前构建源文件
 
-GitHub Actions 与本地复现需要按以下顺序运行。顺序发生变化时，字符串替换可能找不到目标，终端会显示 `expected one match, found 0`。
-
-```text
-python scripts/generate_icon.py
-python scripts/patch_native_ui.py
-python scripts/patch_native_ocr.py
-python scripts/patch_ocr_engine.py
-python scripts/patch_ocr_engine_main_parity.py
-python scripts/patch_native_runtime_fixes.py
-python scripts/patch_native_export_figma.py
-python scripts/normalize_native_release_for_v130.py
-python scripts/patch_native_v130_ui.py
-python scripts/patch_native_v130_ocr.py
-python scripts/patch_native_v130_update.py
-python scripts/patch_native_v131_fixes.py
-python scripts/patch_update_manager.py
-python scripts/patch_update_manager_v131.py
-python scripts/patch_updater_main.py
-python scripts/generate_ocr_smoke_image.py
-```
-
-主界面生成链：
+业务代码直接维护和编译以下权威源文件：
 
 ```text
 native/app.cpp
-  → native/app_generated.cpp
-  → native/app_ocr.cpp
-  → native/app_final.cpp
-  → native/app_release.cpp
-  → native/app_v130_ui.cpp
-  → native/app_v130_ocr.cpp
-  → native/app_v130_update.cpp
-  → native/app_v131.cpp
-```
-
-OCR 生成链：
-
-```text
 native/ocr_engine.cpp
-  → native/ocr_engine_fixed.cpp
-  → native/ocr_engine_v130.cpp
+native/update_manager.cpp
+native/updater_main.cpp
 ```
 
-更新生成链：
+Python 只保留构建资产辅助：
 
 ```text
-native/update_manager.cpp
-  → native/update_manager_fixed.cpp
-
-native/updater_main.cpp
-  → native/updater_main_fixed.cpp
+python scripts/generate_icon.py
+python scripts/generate_ocr_smoke_image.py
+python scripts/extract_ocr_dict.py
 ```
 
-这套链条便于快速试验，维护成本已经偏高。Codex 接手后建议先生成一次最终文件，保存对比补丁，再将有效修改合并回 `native/app.cpp`、`native/ocr_engine.cpp` 和 `native/update_manager.cpp`。合并完成后逐个移除补丁脚本，每删一层都运行完整测试，命令行会依次出现编译、OCR、PNG 和更新测试结果。
+前两个脚本生成图标和 OCR 冒烟测试图片，第三个从模型 YAML 提取识别字典。它们不修改 C++ 业务源码。
 
 ## 6. v1.3.1 三项修复
 
-修复集中在：
+修复现已固化在：
 
 ```text
-scripts/patch_native_v131_fixes.py
+native/app.cpp
 ```
 
 ### 6.1 PNG 像素格式转换失败
@@ -552,16 +510,7 @@ Workflow run: 30729379770
 GITEE_TOKEN:
 ```
 
-随后脚本退出，Gitee Release 步骤被跳过。
-
-继续操作：
-
-1. 在 GitHub 仓库 `Settings → Secrets and variables → Actions` 新增 `GITEE_TOKEN`。
-2. Token 需要具备目标 Gitee 仓库代码写入与 Release API 权限。
-3. 确认 Gitee 已存在 `shmilyfuu/WuwaEchoCalculator` 仓库。
-4. 手动重跑 `Publish v1.3.1`。
-5. 检查 Gitee 的 `main`、`v1.3.1` 标签和两个 Release 附件。
-6. 用旧版程序点击“检查更新”，观察来源先显示 Gitee；临时阻断 Gitee 后，应切换到 GitHub。
+这是首次发布时的历史故障。`GITEE_TOKEN` 后续已配置，GitHub Actions 运行 `30729868964` 已完成 Gitee 主分支、标签与 Release 同步。仍建议用旧版程序实测：正常情况下来源优先显示 Gitee；Gitee 不可用时应回退 GitHub。
 
 当前推送地址使用：
 
@@ -571,41 +520,15 @@ https://oauth2:${GITEE_TOKEN}@gitee.com/shmilyfuu/WuwaEchoCalculator.git
 
 该认证写法需要实测。若 Gitee 返回 401 或 403，可改用用户名加私人令牌，或通过 Gitee 仓库镜像功能同步代码，Release 附件继续调用 API 上传。
 
-### 8.3 临时发布状态记录
+### 8.3 发布状态
 
-临时工作流：
-
-```text
-.github/workflows/record-publish-status.yml
-```
-
-状态分支：
-
-```text
-release-status/v1.3.1
-```
-
-当前状态文件记录发布运行结论为 `failure`，原因只来自缺失的 Gitee Secret。Gitee 发布完成后，可以删除该临时工作流和状态分支，仓库文件列表会少一项临时记录。
+GitHub 与 Gitee 的 v1.3.1 发布均已成功。历史失败状态记录不再代表当前发布状态。
 
 ## 9. 已知欠项与风险
 
-### 9.1 文档过期
+### 9.1 文档与源码已收敛
 
-`README.md` 仍写着 WebView2 与 `v1.2.1`。`docs/NATIVE_MIGRATION.md` 仍写着原生版尚未进入 `main`。Codex 应先更新这两份文档，仓库首页目前会向读者展示旧架构。
-
-### 9.2 补丁链过长
-
-多个脚本依赖完整字符串匹配。改动一处空格或文本后，后续脚本可能报错。界面坐标分散在多层补丁里，搜索同一个按钮名称会出现多个旧版本片段。
-
-建议建立：
-
-```text
-native/app_main.cpp
-native/ocr_engine_main.cpp
-native/update_manager_main.cpp
-```
-
-先用当前生成结果填入，再让编译入口直接引用这些文件。确认输出一致后，逐步删除旧补丁层。
+`README.md` 与迁移文档已更新为 v1.3.1 原生架构；原有 Python 源码补丁链已经删除。后续直接修改 `native/app.cpp`、`native/ocr_engine.cpp`、`native/update_manager.cpp` 和 `native/updater_main.cpp`，并运行完整回归测试。
 
 ### 9.3 实机交互仍需复核
 
@@ -675,17 +598,13 @@ backup/main-webview2-v1.2.2-20260802
 ## 10. 建议的 Codex 接手顺序
 
 1. 拉取 `main`，记录当前提交号。
-2. 运行现有生成链和四项测试，保存完整日志。
-3. 用验证包实测三项 v1.3.1 修复。
-4. 更新 `README.md` 与迁移文档。
-5. 合并补丁链，建立权威源文件。
-6. 为记录位置状态机添加单元测试。
-7. 为 PNG 导出添加多种像素格式测试。
-8. 加入真实声骸截图回归目录。
-9. 配置 `GITEE_TOKEN`，重跑发布。
-10. 使用旧版执行一次完整在线更新。
-11. 将发布工作流改成读取 `VERSION`。
-12. 再进行界面细节、文字、坐标和交互调整。
+2. 运行四项测试，保存完整日志。
+3. 用验证包实测更新检查、下载和重启替换。
+4. 为记录位置状态机添加单元测试。
+5. 为 PNG 导出添加多种像素格式测试。
+6. 加入真实声骸截图回归目录。
+7. 将发布工作流改成读取 `VERSION`。
+8. 再进行界面细节、文字、坐标和交互调整。
 
 每完成一项，运行：
 
@@ -707,17 +626,15 @@ png_export_smoke_test
 
 当前版本为 v1.3.1，主程序使用 Win32、Direct2D、DirectWrite、WIC、ONNX Runtime 和 PP-OCRv5。旧 WebView2 版本保存在 backup/main-webview2-v1.2.2-20260802。
 
-第一步先完整运行当前生成链和四项 smoke test，记录基线结果。请暂时保留现有界面布局与计分数据。
+第一步先运行四项 smoke test，记录基线结果。请暂时保留现有界面布局与计分数据。
 
 需要优先处理：
-1. 更新过期 README 与迁移文档。
-2. 将多层 Python 补丁生成链合并为权威 C++ 源文件，保持 v1.3.1 输出一致。
-3. 为记录位置逻辑添加测试：初始为 1、记录后选择下一空位、清空全部后回到 1。
-4. 为 PNG 导出补充编码器返回兼容像素格式的测试。
-5. 检查 Gitee 发布流程。仓库目前缺少 GITEE_TOKEN，GitHub v1.3.1 Release 已成功。
-6. 完成后给出修改文件、测试结果、剩余风险和可下载 Windows 包。
+1. 为记录位置逻辑添加测试：初始为 1、记录后选择下一空位、清空全部后回到 1。
+2. 为 PNG 导出补充编码器返回兼容像素格式的测试。
+3. 使用旧版执行一次完整在线更新。
+4. 完成后给出修改文件、测试结果、剩余风险和可下载 Windows 包。
 
-修改时不要直接编辑构建生成的 app_v131.cpp、ocr_engine_v130.cpp、update_manager_fixed.cpp；这些文件会被脚本覆盖。先定位对应基础源文件或补丁脚本。
+主程序、OCR 与更新器均直接维护 `native/` 下的权威 C++ 源码，不再通过 Python 补丁生成。
 ```
 
 ## 12. 交接验收清单

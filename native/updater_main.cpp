@@ -3,6 +3,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <shellapi.h>
+#include <dwmapi.h>
 
 #include <algorithm>
 #include <atomic>

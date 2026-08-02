@@ -45,6 +45,15 @@ struct NativeUpdateSnapshot {
     std::uint64_t bytesPerSecond = 0;
 };
 
+struct NativeHttpUrlParts {
+    std::wstring host;
+    std::wstring path;
+    std::uint16_t port = 0;
+    bool secure = false;
+};
+
+bool ParseNativeHttpUrl(const std::wstring& url, NativeHttpUrlParts& parts, std::wstring& error);
+
 class NativeUpdateManager {
 public:
     using Callback = std::function<void(const NativeUpdateSnapshot&)>;

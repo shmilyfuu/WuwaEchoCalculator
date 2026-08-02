@@ -1,10 +1,6 @@
 # Direct2D 原生迁移记录
 
-分支：`feature/native-direct2d-migration`
-
-草稿 PR：#6
-
-此分支用于验证取消 WebView2 后的界面还原、原生 OCR 与导出能力。`main` 保持现状，原生版完成实机校准前不合并。
+原生迁移已完成并进入 `main`，当前发布版本为 `v1.3.1`。历史迁移分支为 `feature/native-direct2d-migration`，旧 WebView2 主线保存在 `backup/main-webview2-v1.2.2-20260802`。
 
 ## 当前实现
 

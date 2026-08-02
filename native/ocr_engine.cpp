@@ -12,6 +12,7 @@
 #include <numeric>
 #include <queue>
 #include <sstream>
+#include <cstdio>
 
 namespace {
 
@@ -48,6 +49,57 @@ float SampleChannel(const std::vector<std::uint8_t>& pixels, int width, int heig
     const float a = at(x0, y0) * (1.0f - fx) + at(x1, y0) * fx;
     const float b = at(x0, y1) * (1.0f - fx) + at(x1, y1) * fx;
     return a * (1.0f - fy) + b * fy;
+}
+
+struct PreparedImage {
+    std::vector<std::uint8_t> pixels;
+    int width = 0;
+    int height = 0;
+    int stride = 0;
+};
+
+PreparedImage PreprocessLikeMain(const std::vector<std::uint8_t>& bgra,
+                                 int width, int height, int stride) {
+    const int shortest = std::min(width, height);
+    const int longest = std::max(width, height);
+    float scale = 1.0f;
+    if (shortest < 720) scale = std::min(3.2f, 720.0f / static_cast<float>(std::max(1, shortest)));
+    if (static_cast<float>(longest) * scale > 1900.0f) scale = 1900.0f / static_cast<float>(longest);
+    const int scaledWidth = std::max(1, static_cast<int>(std::lround(width * scale)));
+    const int scaledHeight = std::max(1, static_cast<int>(std::lround(height * scale)));
+    const int padding = std::max(20, static_cast<int>(std::lround(24.0f * scale)));
+
+    PreparedImage output;
+    output.width = scaledWidth + padding * 2;
+    output.height = scaledHeight + padding * 2;
+    output.stride = output.width * 4;
+    output.pixels.resize(static_cast<std::size_t>(output.stride) * output.height);
+
+    // Canvas background used by main: #101a25, stored as BGRA.
+    for (int y = 0; y < output.height; ++y) {
+        auto* row = output.pixels.data() + static_cast<std::size_t>(y) * output.stride;
+        for (int x = 0; x < output.width; ++x) {
+            row[x * 4 + 0] = 0x25;
+            row[x * 4 + 1] = 0x1a;
+            row[x * 4 + 2] = 0x10;
+            row[x * 4 + 3] = 0xff;
+        }
+    }
+
+    const float sourceScaleX = static_cast<float>(width) / scaledWidth;
+    const float sourceScaleY = static_cast<float>(height) / scaledHeight;
+    for (int y = 0; y < scaledHeight; ++y) {
+        auto* destination = output.pixels.data() + static_cast<std::size_t>(y + padding) * output.stride + padding * 4;
+        for (int x = 0; x < scaledWidth; ++x) {
+            const float sourceX = (x + .5f) * sourceScaleX - .5f;
+            const float sourceY = (y + .5f) * sourceScaleY - .5f;
+            destination[x * 4 + 0] = static_cast<std::uint8_t>(std::clamp(std::lround(SampleChannel(bgra, width, height, stride, sourceX, sourceY, 0)), 0l, 255l));
+            destination[x * 4 + 1] = static_cast<std::uint8_t>(std::clamp(std::lround(SampleChannel(bgra, width, height, stride, sourceX, sourceY, 1)), 0l, 255l));
+            destination[x * 4 + 2] = static_cast<std::uint8_t>(std::clamp(std::lround(SampleChannel(bgra, width, height, stride, sourceX, sourceY, 2)), 0l, 255l));
+            destination[x * 4 + 3] = 0xff;
+        }
+    }
+    return output;
 }
 
 struct Box {
@@ -112,7 +164,7 @@ struct NativeOcrEngine::Impl {
     std::vector<float> BuildDetectorInput(const std::vector<std::uint8_t>& bgra,
                                           int width, int height, int stride,
                                           int& targetWidth, int& targetHeight) {
-        const float scale = std::min(1.0f, 960.0f / static_cast<float>(std::max(width, height)));
+        const float scale = std::min(1.0f, 1600.0f / static_cast<float>(std::max(width, height)));
         targetWidth = RoundTo32(static_cast<int>(std::round(width * scale)));
         targetHeight = RoundTo32(static_cast<int>(std::round(height * scale)));
         std::vector<float> tensor(static_cast<std::size_t>(3) * targetWidth * targetHeight);
@@ -148,7 +200,9 @@ struct NativeOcrEngine::Impl {
         const char* inputNames[] = {detectorInput.c_str()};
         const char* outputNames[] = {detectorOutput.c_str()};
         Ort::RunOptions runOptions;
+        std::fprintf(stderr,"[ocr] detector input=%dx%d\n",inputWidth,inputHeight);
         auto outputs = detector->Run(runOptions, inputNames, &tensor, 1, outputNames, 1);
+        std::fprintf(stderr,"[ocr] detector run complete outputs=%zu\n",outputs.size());
         if (outputs.empty() || !outputs[0].IsTensor()) {
             error = L"文字检测模型没有返回张量";
             return {};
@@ -161,14 +215,15 @@ struct NativeOcrEngine::Impl {
         }
         const int mapHeight = static_cast<int>(dimensions[dimensions.size() - 2]);
         const int mapWidth = static_cast<int>(dimensions[dimensions.size() - 1]);
+        std::fprintf(stderr,"[ocr] detector output=%dx%d type=%d\n",mapWidth,mapHeight,static_cast<int>(info.GetElementType()));
         const float* probability = outputs[0].GetTensorData<float>();
         const std::size_t mapSize = static_cast<std::size_t>(mapWidth) * mapHeight;
         std::vector<std::uint8_t> visited(mapSize, 0);
         std::vector<Box> boxes;
         std::queue<int> queue;
-        constexpr float threshold = 0.30f;
-        constexpr int dx[4] = {1, -1, 0, 0};
-        constexpr int dy[4] = {0, 0, 1, -1};
+        constexpr float threshold = 0.25f;
+        constexpr int dx[8] = {1,-1,0,0,1,1,-1,-1};
+        constexpr int dy[8] = {0,0,1,-1,1,-1,1,-1};
 
         for (int y = 0; y < mapHeight; ++y) {
             if (cancelFlag.load()) return {};
@@ -188,7 +243,7 @@ struct NativeOcrEngine::Impl {
                     minY = std::min(minY, cy); maxY = std::max(maxY, cy);
                     scoreSum += probability[current];
                     ++count;
-                    for (int direction = 0; direction < 4; ++direction) {
+                    for (int direction = 0; direction < 8; ++direction) {
                         const int nx = cx + dx[direction];
                         const int ny = cy + dy[direction];
                         if (nx < 0 || ny < 0 || nx >= mapWidth || ny >= mapHeight) continue;
@@ -202,11 +257,11 @@ struct NativeOcrEngine::Impl {
                 const int boxWidth = maxX - minX + 1;
                 const int boxHeight = maxY - minY + 1;
                 const float score = count ? static_cast<float>(scoreSum / count) : 0.0f;
-                if (count < 12 || boxWidth < 4 || boxHeight < 4 || score < 0.45f) continue;
+                if (count < 4 || boxWidth < 2 || boxHeight < 2 || score < 0.32f) continue;
                 const float scaleX = static_cast<float>(width) / mapWidth;
                 const float scaleY = static_cast<float>(height) / mapHeight;
-                const float paddingX = boxWidth * scaleX * 0.14f + 2.0f;
-                const float paddingY = boxHeight * scaleY * 0.28f + 2.0f;
+                const float paddingX = boxWidth * scaleX * 0.35f + 3.0f;
+                const float paddingY = boxHeight * scaleY * 0.35f + 3.0f;
                 Box box;
                 box.left = std::max(0, static_cast<int>(std::floor(minX * scaleX - paddingX)));
                 box.top = std::max(0, static_cast<int>(std::floor(minY * scaleY - paddingY)));
@@ -224,6 +279,7 @@ struct NativeOcrEngine::Impl {
             return a.left < b.left;
         });
         if (boxes.size() > 120) boxes.resize(120);
+        std::fprintf(stderr,"[ocr] detector boxes=%zu\n",boxes.size());
         return boxes;
     }
 
@@ -263,7 +319,9 @@ struct NativeOcrEngine::Impl {
         const char* inputNames[] = {recognizerInput.c_str()};
         const char* outputNames[] = {recognizerOutput.c_str()};
         Ort::RunOptions runOptions;
+        std::fprintf(stderr,"[ocr] recognizer box=(%d,%d)-(%d,%d) inputWidth=%d\n",box.left,box.top,box.right,box.bottom,inputWidth);
         auto outputs = recognizer->Run(runOptions, inputNames, &tensor, 1, outputNames, 1);
+        std::fprintf(stderr,"[ocr] recognizer run complete outputs=%zu\n",outputs.size());
         NativeOcrLine line;
         line.left = box.left; line.top = box.top; line.right = box.right; line.bottom = box.bottom;
         if (outputs.empty() || !outputs[0].IsTensor()) {
@@ -278,6 +336,7 @@ struct NativeOcrEngine::Impl {
         }
         const int steps = static_cast<int>(dimensions[dimensions.size() - 2]);
         const int classes = static_cast<int>(dimensions[dimensions.size() - 1]);
+        std::fprintf(stderr,"[ocr] recognizer output steps=%d classes=%d type=%d\n",steps,classes,static_cast<int>(info.GetElementType()));
         const float* logits = outputs[0].GetTensorData<float>();
         int previous = -1;
         float confidenceSum = 0.0f;
@@ -289,9 +348,21 @@ struct NativeOcrEngine::Impl {
             for (int index = 0; index < classes; ++index) {
                 if (row[index] > maximum) { maximum = row[index]; best = index; }
             }
-            double denominator = 0.0;
-            for (int index = 0; index < classes; ++index) denominator += std::exp(static_cast<double>(row[index] - maximum));
-            const float probability = denominator > 0.0 ? static_cast<float>(1.0 / denominator) : 0.0f;
+            bool normalizedProbability = true;
+            double probabilitySum = 0.0;
+            for (int index = 0; index < classes; ++index) {
+                const float value = row[index];
+                if (!std::isfinite(value) || value < -0.0001f || value > 1.0001f) normalizedProbability = false;
+                probabilitySum += value;
+            }
+            float probability = 0.0f;
+            if (normalizedProbability && probabilitySum > 0.80 && probabilitySum < 1.20) {
+                probability = std::clamp(row[best], 0.0f, 1.0f);
+            } else {
+                double denominator = 0.0;
+                for (int index = 0; index < classes; ++index) denominator += std::exp(static_cast<double>(row[index] - maximum));
+                probability = denominator > 0.0 ? static_cast<float>(1.0 / denominator) : 0.0f;
+            }
             if (best != 0 && best != previous && best - 1 < static_cast<int>(dictionary.size())) {
                 line.text += dictionary[static_cast<std::size_t>(best - 1)];
                 confidenceSum += probability;
@@ -353,16 +424,28 @@ NativeOcrJobResult NativeOcrEngine::Recognize(const std::vector<std::uint8_t>& b
         return result;
     }
     try {
-        auto boxes = impl_->Detect(bgra, width, height, stride, cancelFlag, result.error);
+        auto prepared = PreprocessLikeMain(bgra, width, height, stride);
+        if (cancelFlag.load()) { result.cancelled = true; return result; }
+        std::fprintf(stderr,"[ocr] recognize begin original=%dx%d prepared=%dx%d stride=%d\n",width,height,prepared.width,prepared.height,prepared.stride);
+        auto boxes = impl_->Detect(prepared.pixels, prepared.width, prepared.height, prepared.stride, cancelFlag, result.error);
         if (cancelFlag.load()) { result.cancelled = true; return result; }
         if (!result.error.empty()) return result;
+        if (boxes.empty()) {
+            result.error = L"未检测到文字区域";
+            return result;
+        }
         for (const auto& box : boxes) {
             if (cancelFlag.load()) { result.cancelled = true; result.lines.clear(); return result; }
             std::wstring error;
-            auto line = impl_->RecognizeBox(bgra, width, height, stride, box, error);
+            auto line = impl_->RecognizeBox(prepared.pixels, prepared.width, prepared.height, prepared.stride, box, error);
             if (!error.empty()) { result.error = error; return result; }
-            if (!line.text.empty() && line.confidence >= 0.18f) result.lines.push_back(std::move(line));
+            if (!line.text.empty() && line.confidence >= 0.20f) result.lines.push_back(std::move(line));
         }
+        if (result.lines.empty()) {
+            result.error = L"检测到 " + std::to_wstring(boxes.size()) + L" 个文字区域，但识别结果为空";
+            return result;
+        }
+        std::fprintf(stderr,"[ocr] accepted lines=%zu\n",result.lines.size());
         std::sort(result.lines.begin(), result.lines.end(), [](const NativeOcrLine& a, const NativeOcrLine& b) {
             const int ay = (a.top + a.bottom) / 2;
             const int by = (b.top + b.bottom) / 2;

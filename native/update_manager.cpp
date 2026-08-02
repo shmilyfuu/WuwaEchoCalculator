@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -252,30 +253,43 @@ std::vector<std::wstring> JsonArrayObjects(const std::wstring& object, const std
     return {};
 }
 
-bool OpenRequest(const std::wstring& url, InternetHandle& session, InternetHandle& connection,
-                 InternetHandle& request, std::wstring& error) {
+bool ParseHttpUrl(const std::wstring& url, NativeHttpUrlParts& parts, std::wstring& error) {
     URL_COMPONENTS components{};
     components.dwStructSize = sizeof(components);
-    std::array<wchar_t, 256> host{};
-    std::array<wchar_t, 4096> path{};
-    components.lpszHostName = host.data(); components.dwHostNameLength = static_cast<DWORD>(host.size());
-    components.lpszUrlPath = path.data(); components.dwUrlPathLength = static_cast<DWORD>(path.size());
-    components.lpszExtraInfo = path.data();
+    components.dwSchemeLength = static_cast<DWORD>(-1);
+    components.dwHostNameLength = static_cast<DWORD>(-1);
+    components.dwUrlPathLength = static_cast<DWORD>(-1);
+    components.dwExtraInfoLength = static_cast<DWORD>(-1);
     if (!WinHttpCrackUrl(url.c_str(), static_cast<DWORD>(url.size()), 0, &components)) {
         error = L"解析更新地址失败：" + ErrorText(GetLastError());
         return false;
     }
-    const std::wstring hostName(components.lpszHostName, components.dwHostNameLength);
-    std::wstring requestPath(components.lpszUrlPath, components.dwUrlPathLength);
-    if (components.dwExtraInfoLength && components.lpszExtraInfo) requestPath.append(components.lpszExtraInfo, components.dwExtraInfoLength);
-    session = InternetHandle(WinHttpOpen(L"WuwaEchoCalculator-Updater/1.3.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    if (!components.lpszHostName || !components.dwHostNameLength) {
+        error = L"更新地址缺少服务器名称";
+        return false;
+    }
+    parts.host.assign(components.lpszHostName, components.dwHostNameLength);
+    parts.path = components.lpszUrlPath && components.dwUrlPathLength
+        ? std::wstring(components.lpszUrlPath, components.dwUrlPathLength) : L"/";
+    if (components.dwExtraInfoLength && components.lpszExtraInfo)
+        parts.path.append(components.lpszExtraInfo, components.dwExtraInfoLength);
+    parts.port = components.nPort;
+    parts.secure = components.nScheme == INTERNET_SCHEME_HTTPS;
+    return true;
+}
+
+bool OpenRequest(const std::wstring& url, InternetHandle& session, InternetHandle& connection,
+                 InternetHandle& request, std::wstring& error) {
+    NativeHttpUrlParts parts;
+    if (!ParseHttpUrl(url, parts, error)) return false;
+    session = InternetHandle(WinHttpOpen(L"WuwaEchoCalculator-Updater/1.3.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!session) { error = L"初始化网络组件失败：" + ErrorText(GetLastError()); return false; }
     WinHttpSetTimeouts(session.value, 10000, 10000, 15000, 120000);
-    connection = InternetHandle(WinHttpConnect(session.value, hostName.c_str(), components.nPort, 0));
+    connection = InternetHandle(WinHttpConnect(session.value, parts.host.c_str(), parts.port, 0));
     if (!connection) { error = L"连接更新服务器失败：" + ErrorText(GetLastError()); return false; }
-    const DWORD flags = components.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
-    request = InternetHandle(WinHttpOpenRequest(connection.value, L"GET", requestPath.c_str(), nullptr,
+    const DWORD flags = parts.secure ? WINHTTP_FLAG_SECURE : 0;
+    request = InternetHandle(WinHttpOpenRequest(connection.value, L"GET", parts.path.c_str(), nullptr,
         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags));
     if (!request) { error = L"创建更新请求失败：" + ErrorText(GetLastError()); return false; }
     const wchar_t headers[] = L"Accept: application/json\r\n";
@@ -363,6 +377,8 @@ bool FetchRelease(const std::wstring& source, const std::wstring& latestUrl, con
             }
         }
     }
+    info.available = NativeUpdateManager::CompareVersions(currentVersion, info.version) < 0;
+    if (!info.available) return true;
     const std::wstring expected = L"WuwaEchoCalculator-v" + info.version + L"-windows-x64.zip";
     for (const auto& asset : assets) {
         if (EqualsInsensitive(asset.name, expected)) {
@@ -375,7 +391,6 @@ bool FetchRelease(const std::wstring& source, const std::wstring& latestUrl, con
         }
     }
     if (info.downloadUrl.empty()) { error = source + L" Release 缺少 " + expected; return false; }
-    info.available = NativeUpdateManager::CompareVersions(currentVersion, info.version) < 0;
     return true;
 }
 
@@ -448,6 +463,12 @@ std::map<std::wstring, std::wstring> ReadMarker(const std::filesystem::path& pat
 }
 
 }  // namespace
+
+bool ParseNativeHttpUrl(const std::wstring& url, NativeHttpUrlParts& parts, std::wstring& error) {
+    parts = {};
+    error.clear();
+    return ParseHttpUrl(url, parts, error);
+}
 
 struct NativeUpdateManager::Impl {
     std::wstring executableDirectory;
@@ -627,28 +648,56 @@ void NativeUpdateManager::DownloadLatest() {
         NativeUpdateSnapshot preparing; preparing.phase = NativeUpdatePhase::Preparing; preparing.latest = info; preparing.message = L"正在准备更新包";
         impl_->Notify(preparing);
         std::wstring error;
-        std::wstring expectedSha = info.sha256;
-        if (expectedSha.empty() && !info.checksumUrl.empty()) {
-            if (!FetchChecksum(info.checksumUrl, expectedSha, error)) {
-                NativeUpdateSnapshot failed; failed.phase = NativeUpdatePhase::Error; failed.latest = info; failed.message = L"读取校验文件失败"; failed.error = error;
-                impl_->busy.store(false); impl_->Notify(std::move(failed)); return;
-            }
+        NativeUpdateInfo selectedInfo = info;
+        auto resolveChecksum = [&](const NativeUpdateInfo& candidate, std::wstring& checksum, std::wstring& checksumError) {
+            checksum = candidate.sha256;
+            if (checksum.empty() && !candidate.checksumUrl.empty())
+                return FetchChecksum(candidate.checksumUrl, checksum, checksumError);
+            return true;
+        };
+        std::wstring expectedSha;
+        if (!resolveChecksum(selectedInfo, expectedSha, error)) {
+            NativeUpdateSnapshot failed; failed.phase = NativeUpdatePhase::Error; failed.latest = selectedInfo; failed.message = L"读取校验文件失败"; failed.error = error;
+            impl_->busy.store(false); impl_->Notify(std::move(failed)); return;
         }
         std::error_code ec;
         std::filesystem::remove_all(impl_->PendingDirectory(), ec);
         std::filesystem::create_directories(impl_->PendingDirectory(), ec);
         if (ec) {
-            NativeUpdateSnapshot failed; failed.phase = NativeUpdatePhase::Error; failed.latest = info; failed.message = L"准备更新目录失败"; failed.error = Utf8ToWide(ec.message());
+            NativeUpdateSnapshot failed; failed.phase = NativeUpdatePhase::Error; failed.latest = selectedInfo; failed.message = L"准备更新目录失败"; failed.error = Utf8ToWide(ec.message());
             impl_->busy.store(false); impl_->Notify(std::move(failed)); return;
         }
-        const auto package = impl_->PendingDirectory() / (L"WuwaEchoCalculator-v" + info.version + L"-windows-x64.zip");
-        if (!impl_->DownloadFile(info, package, expectedSha, error)) {
+        const auto package = impl_->PendingDirectory() / (L"WuwaEchoCalculator-v" + selectedInfo.version + L"-windows-x64.zip");
+        bool downloaded = impl_->DownloadFile(selectedInfo, package, expectedSha, error);
+        if (!downloaded && !impl_->cancel.load() && EqualsInsensitive(selectedInfo.source, L"Gitee")) {
+            std::filesystem::remove(package, ec);
+            NativeUpdateInfo fallback;
+            std::wstring fallbackError;
+            if (FetchRelease(L"GitHub", kGithubLatestUrl, kGithubPageBase, false, impl_->currentVersion, fallback, fallbackError) &&
+                fallback.available && EqualsInsensitive(fallback.version, selectedInfo.version)) {
+                std::wstring fallbackSha;
+                if (resolveChecksum(fallback, fallbackSha, fallbackError)) {
+                    NativeUpdateSnapshot switching; switching.phase = NativeUpdatePhase::Preparing; switching.latest = fallback;
+                    switching.message = L"Gitee 下载失败，正在切换到 GitHub";
+                    impl_->Notify(std::move(switching));
+                    selectedInfo = fallback;
+                    expectedSha = fallbackSha;
+                    error.clear();
+                    downloaded = impl_->DownloadFile(selectedInfo, package, expectedSha, error);
+                }
+            }
+            if (!downloaded && !fallbackError.empty()) {
+                if (!error.empty()) error += L"；";
+                error += fallbackError;
+            }
+        }
+        if (!downloaded) {
             std::filesystem::remove(package, ec);
             NativeUpdateSnapshot failed; failed.phase = impl_->cancel.load() ? NativeUpdatePhase::Cancelled : NativeUpdatePhase::Error;
-            failed.latest = info; failed.message = impl_->cancel.load() ? L"下载已取消" : L"更新包准备失败"; failed.error = error;
+            failed.latest = selectedInfo; failed.message = impl_->cancel.load() ? L"下载已取消" : L"更新包准备失败"; failed.error = error;
             impl_->busy.store(false); impl_->Notify(std::move(failed)); return;
         }
-        NativeUpdateInfo markerInfo = info; markerInfo.sha256 = expectedSha;
+        NativeUpdateInfo markerInfo = selectedInfo; markerInfo.sha256 = expectedSha;
         if (!WriteMarker(impl_->MarkerPath(), markerInfo, package, error)) {
             NativeUpdateSnapshot failed; failed.phase = NativeUpdatePhase::Error; failed.latest = info; failed.message = L"保存待安装更新失败"; failed.error = error;
             impl_->busy.store(false); impl_->Notify(std::move(failed)); return;
@@ -656,7 +705,7 @@ void NativeUpdateManager::DownloadLatest() {
         {
             std::lock_guard lock(impl_->mutex);
             impl_->preparedPackage = package;
-            impl_->preparedVersion = info.version;
+            impl_->preparedVersion = markerInfo.version;
             impl_->latest = markerInfo;
         }
         NativeUpdateSnapshot ready; ready.phase = NativeUpdatePhase::Ready; ready.latest = markerInfo; ready.message = L"更新包已准备完成"; ready.packagePath = package.wstring();
