@@ -1,8 +1,6 @@
-name: Publish v1.3.1
+name: Publish v1.3.2
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -24,7 +22,7 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content VERSION -Raw).Trim()
-          if ($version -ne '1.3.1') { throw "Expected VERSION 1.3.1, got $version" }
+          if ($version -ne '1.3.2') { throw "Expected VERSION 1.3.2, got $version" }
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -104,32 +102,42 @@ jobs:
           if ($LASTEXITCODE) { throw 'OCR inference regression failed' }
           & build-native\png_export_smoke_test.exe (Join-Path $PWD build-tests\export.png)
           if ($LASTEXITCODE) { throw 'PNG regression failed' }
+          $application = Get-Content native\app.cpp -Raw
+          if (-not $application.Contains('kAppVersion[] = L"1.3.2"')) { throw 'Application version is not v1.3.2' }
+          if (-not $application.Contains('enum class StatusLevel { Normal, Attention, Error }')) { throw 'Three-level status indicator is missing' }
+          $updater = Get-Content native\updater_main.cpp -Raw
+          if ($updater.Contains('MessageBoxW')) { throw 'System updater error dialog is still present' }
+          if (-not $updater.Contains('WuwaEchoUpdaterFailureWindow')) { throw 'Custom updater failure dialog is missing' }
 
       - name: Assemble release assets
         shell: pwsh
         run: |
-          $folder = 'dist\鸣潮声骸计算器_v1.3.1'
+          $folder = 'dist\鸣潮声骸计算器_v1.3.2'
           New-Item -ItemType Directory -Force "$folder\models", "$folder\data", "$folder\updates" | Out-Null
           Copy-Item build-native\WuwaEchoCalculator.exe "$folder\鸣潮声骸计算器.exe"
           Copy-Item build-native\WuwaEchoUpdater.exe "$folder\WuwaEchoUpdater.exe"
           Copy-Item build-native\onnxruntime*.dll $folder
           Copy-Item build-models\det.onnx,build-models\rec.onnx,build-models\dict.txt "$folder\models"
           Copy-Item RELEASE_NOTES.md "$folder\版本说明.md"
-          Compress-Archive -Path $folder -DestinationPath WuwaEchoCalculator-v1.3.1-windows-x64.zip -CompressionLevel Optimal
-          $hash = (Get-FileHash WuwaEchoCalculator-v1.3.1-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  WuwaEchoCalculator-v1.3.1-windows-x64.zip" | Set-Content WuwaEchoCalculator-v1.3.1-windows-x64.zip.sha256 -Encoding ASCII
+          Compress-Archive -Path $folder -DestinationPath WuwaEchoCalculator-v1.3.2-windows-x64.zip -CompressionLevel Optimal
+          $hash = (Get-FileHash WuwaEchoCalculator-v1.3.2-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  WuwaEchoCalculator-v1.3.2-windows-x64.zip" | Set-Content WuwaEchoCalculator-v1.3.2-windows-x64.zip.sha256 -Encoding ASCII
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          TAG="v1.3.1"
+          TAG="v1.3.2"
+          if ! git rev-parse --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/${TAG}"
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" WuwaEchoCalculator-v1.3.1-windows-x64.zip WuwaEchoCalculator-v1.3.1-windows-x64.zip.sha256 --clobber
+            gh release upload "$TAG" WuwaEchoCalculator-v1.3.2-windows-x64.zip WuwaEchoCalculator-v1.3.2-windows-x64.zip.sha256 --clobber
             gh release edit "$TAG" --notes-file RELEASE_NOTES.md
           else
-            gh release create "$TAG" WuwaEchoCalculator-v1.3.1-windows-x64.zip WuwaEchoCalculator-v1.3.1-windows-x64.zip.sha256 --target main --title "鸣潮声骸计算器 v1.3.1" --notes-file RELEASE_NOTES.md
+            gh release create "$TAG" WuwaEchoCalculator-v1.3.2-windows-x64.zip WuwaEchoCalculator-v1.3.2-windows-x64.zip.sha256 --target main --title "鸣潮声骸计算器 v1.3.2" --notes-file RELEASE_NOTES.md
           fi
 
       - name: Mirror main and tag to Gitee
@@ -141,7 +149,7 @@ jobs:
           git remote remove gitee 2>/dev/null || true
           git remote add gitee "https://oauth2:${GITEE_TOKEN}@gitee.com/shmilyfuu/WuwaEchoCalculator.git"
           git push gitee main --force
-          git push gitee v1.3.1 --force
+          git push gitee v1.3.2 --force
 
       - name: Create Gitee Release
         env:
@@ -149,4 +157,4 @@ jobs:
         shell: bash
         run: |
           chmod +x .github/scripts/publish-gitee-release.sh
-          VERSION=1.3.1 .github/scripts/publish-gitee-release.sh
+          VERSION=1.3.2 .github/scripts/publish-gitee-release.sh

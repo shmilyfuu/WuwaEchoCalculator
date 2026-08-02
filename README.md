@@ -1,6 +1,6 @@
 # WuwaEchoCalculator
 
-鸣潮声骸截图识别与活动计分工具。当前版本为 **v1.3.1**，主程序采用 Win32、Direct2D、DirectWrite、WIC 与 ONNX Runtime，PP-OCRv5 在本机完成图片识别。
+鸣潮声骸截图识别与活动计分工具。当前版本为 **v1.3.2**，主程序采用 Win32、Direct2D、DirectWrite、WIC 与 ONNX Runtime，PP-OCRv5 在本机完成图片识别。
 
 ## 功能
 
@@ -11,6 +11,29 @@
 - 支持中止当前识别，以及 Gitee 优先、GitHub 回退的应用更新。
 - 图片与记录只在本机处理和保存。
 
+## 更新
+
+### v1.3.2
+
+- 按统一的 24px 内容边距和按钮规范调整确认、导出与更新弹窗。
+- 优化导出标题输入框的蓝色/黄色圆角高亮和超限浮层。
+- 底部状态提示区分绿色正常、黄色注意和红色错误状态。
+- 更新助手进度条改为 3px 圆角，并使用自定义更新失败弹窗。
+- 更新前严格确认计算器已经退出，失败后保留更新包供重新启动后继续安装。
+- 增加单实例限制，避免多个计算器进程占用更新文件。
+
+<details>
+<summary>历史更新</summary>
+
+### v1.3.1
+
+- 修复部分 Windows 环境导出记录时的 PNG 像素格式转换失败。
+- 修复新图片识别初始阶段短暂显示手动状态的问题。
+- 清空全部声骸记录后，记录位置自动回到“声骸 1”。
+- 原生 Direct2D 界面、PP-OCRv5 本地识别与应用内更新功能进入正式主线。
+
+</details>
+
 ## 构建
 
 正式 Windows 便携包由 GitHub Actions 构建。主程序直接编译 `native/` 下的权威 C++ 源码；Python 仅用于生成图标、OCR 测试图片，以及从模型配置提取识别字典，不参与业务源码生成。
@@ -19,6 +42,6 @@
 
 - `.github/workflows/build.yml`：构建与回归测试。
 - `.github/workflows/native-validation.yml`：原生实现验证。
-- `.github/workflows/publish-v131.yml`：v1.3.1 发布。
+- `.github/workflows/publish-v132.yml`：v1.3.2 发布。
 
 旧 WebView2 版本保存在分支 `backup/main-webview2-v1.2.2-20260802`。

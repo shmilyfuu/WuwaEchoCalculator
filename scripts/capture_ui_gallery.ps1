@@ -137,7 +137,7 @@ function Capture-UpdaterState {
     if (Test-Path -LiteralPath $target) { return }
     $process = Start-Process -FilePath $script:updaterExe -ArgumentList @('--ui-preview', $State) -PassThru
     try {
-        $handle = Wait-Window -Process $process -Class $(if ($Dialog) { '#32770' } else { '' })
+        $handle = Wait-Window -Process $process -Class $(if ($Dialog) { 'WuwaEchoUpdaterFailureWindow' } else { '' })
         Start-Sleep -Milliseconds 500
         Save-WindowScreenshot -Handle $handle -Path $target
         if ($Dialog) { [void][UiCaptureNative]::SendMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) }
@@ -192,7 +192,7 @@ $updaterStates = @(
     @('updater-error',      '34_updater_error_state.png')
 )
 foreach ($entry in $updaterStates) { Capture-UpdaterState -State $entry[0] -FileName $entry[1] }
-Capture-UpdaterState -State 'updater-error-dialog' -FileName '35_system_dialog_updater_error.png' -Dialog
+Capture-UpdaterState -State 'updater-error-dialog' -FileName '35_custom_dialog_updater_error.png' -Dialog
 
 # Windows common dialogs are triggered through the real controls so their screenshots match the host OS.
 $openProcess = Start-Process -FilePath $script:appExe -ArgumentList @('--ui-preview','main-recognized','--preview-image',$SampleImage) -PassThru

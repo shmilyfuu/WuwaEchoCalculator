@@ -1,8 +1,8 @@
-name: Record v1.3.1 publish status
+name: Record v1.3.2 publish status
 
 on:
   workflow_run:
-    workflows: [ "Publish v1.3.1" ]
+    workflows: [ "Publish v1.3.2" ]
     types: [ completed ]
 
 permissions:
@@ -15,7 +15,7 @@ jobs:
       - name: Checkout status branch
         uses: actions/checkout@v4
         with:
-          ref: release-status/v1.3.1
+          ref: main
 
       - name: Record workflow result
         shell: bash
@@ -26,7 +26,7 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
         run: |
-          cat > PUBLISH_STATUS_V131.json <<EOF
+          cat > PUBLISH_STATUS_V132.json <<EOF
           {
             "run_id": ${RUN_ID},
             "run_number": ${RUN_NUMBER},
@@ -37,6 +37,6 @@ jobs:
           EOF
           git config user.name github-actions
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add PUBLISH_STATUS_V131.json
-          git commit -m "ci: record v1.3.1 publication ${CONCLUSION}" || exit 0
-          git push origin HEAD:release-status/v1.3.1
+          git add PUBLISH_STATUS_V132.json
+          git commit -m "ci: record v1.3.2 publication ${CONCLUSION}" || exit 0
+          git push origin HEAD:release-status/v1.3.2 --force

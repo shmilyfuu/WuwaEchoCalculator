@@ -2,6 +2,7 @@
 #define _UNICODE
 #define NOMINMAX
 #include <windows.h>
+#include <windowsx.h>
 #include <shellapi.h>
 #include <dwmapi.h>
 
@@ -20,6 +21,8 @@
 namespace {
 
 constexpr wchar_t kClassName[] = L"WuwaEchoUpdaterWindow";
+constexpr wchar_t kFailureClassName[] = L"WuwaEchoUpdaterFailureWindow";
+constexpr wchar_t kCalculatorClassName[] = L"WuwaEchoCalculatorNativeWindow";
 constexpr UINT kProgressMessage = WM_APP + 1;
 constexpr UINT kCompleteMessage = WM_APP + 2;
 constexpr UINT kFailureMessage = WM_APP + 3;
@@ -41,11 +44,14 @@ struct ProgressState {
 };
 
 HWND g_window = nullptr;
+HWND g_failureWindow = nullptr;
 std::mutex g_stateMutex;
 ProgressState g_state;
 HFONT g_titleFont = nullptr;
 HFONT g_bodyFont = nullptr;
 HFONT g_smallFont = nullptr;
+bool g_failureButtonHot = false;
+bool g_failureButtonDown = false;
 
 #ifdef WUWA_UI_PREVIEW
 std::wstring PreviewArgument() {
@@ -65,7 +71,7 @@ std::wstring PreviewArgument() {
 
 void ApplyPreviewState(const std::wstring& state) {
     if (state == L"updater-waiting") g_state = {4,L"正在等待计算器退出",L"",false,false};
-    else if (state == L"updater-preparing") g_state = {10,L"正在准备更新文件",L"WuwaEchoCalculator-v1.3.2-windows-x64.zip",false,false};
+    else if (state == L"updater-preparing") g_state = {10,L"正在准备更新文件",L"WuwaEchoCalculator-v1.3.3-windows-x64.zip",false,false};
     else if (state == L"updater-checking") g_state = {22,L"正在检查更新文件",L"",false,false};
     else if (state == L"updater-backup") g_state = {26,L"正在备份当前版本",L"",false,false};
     else if (state == L"updater-replacing") g_state = {64,L"正在替换程序文件",L"models\\rec.onnx",false,false};
@@ -245,14 +251,18 @@ bool ReplaceFiles(const std::filesystem::path& source, const std::filesystem::pa
             const auto backupFile = backup / relative;
             std::filesystem::create_directories(backupFile.parent_path(), ec); ec.clear();
             std::filesystem::copy_file(to, backupFile, std::filesystem::copy_options::overwrite_existing, ec);
-            if (ec) { error = L"备份当前文件失败：" + relative.wstring(); RestoreBackup(target, backup, copied); return false; }
+            if (ec) {
+                error = L"备份当前文件失败：" + relative.wstring();
+                if (!RestoreBackup(target, backup, copied)) error += L"（恢复原版本失败）";
+                return false;
+            }
         }
         std::filesystem::create_directories(to.parent_path(), ec); ec.clear();
         std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, ec);
         if (ec) {
             error = L"替换程序文件失败：" + relative.wstring();
             copied.push_back({relative, existed});
-            RestoreBackup(target, backup, copied);
+            if (!RestoreBackup(target, backup, copied)) error += L"（恢复原版本失败）";
             return false;
         }
         copied.push_back({relative, existed});
@@ -262,20 +272,28 @@ bool ReplaceFiles(const std::filesystem::path& source, const std::filesystem::pa
     return true;
 }
 
-void WaitForParent(DWORD parentPid) {
+bool WaitForParent(DWORD parentPid, std::wstring& error) {
     HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, parentPid);
-    if (!process) return;
-    WaitForSingleObject(process, 60000);
+    if (!process) {
+        if (GetLastError() == ERROR_INVALID_PARAMETER) return true;
+        error = L"无法确认计算器是否已经退出：" + ErrorText(GetLastError());
+        return false;
+    }
+    const DWORD wait = WaitForSingleObject(process, 60000);
     CloseHandle(process);
+    if (wait == WAIT_OBJECT_0) return true;
+    if (wait == WAIT_TIMEOUT) error = L"等待鸣潮声骸计算器退出超时";
+    else error = L"等待鸣潮声骸计算器退出失败：" + ErrorText(GetLastError());
+    return false;
 }
 
 void Worker(Arguments arguments) {
     SetProgress(4, L"正在等待计算器退出");
-    WaitForParent(arguments.parentPid);
+    std::wstring error;
+    if (!WaitForParent(arguments.parentPid, error)) { SetFailure(error); return; }
     const auto updateRoot = arguments.target / L"updates";
     const auto extraction = updateRoot / (L"install-temp-" + arguments.version);
     const auto backup = updateRoot / (L"backup-" + arguments.version);
-    std::wstring error;
     SetProgress(10, L"正在准备更新文件", arguments.package.filename().wstring());
     if (!ExtractPackage(arguments.package, extraction, error)) { SetFailure(error); return; }
     SetProgress(22, L"正在检查更新文件");
@@ -303,22 +321,113 @@ void DrawTextLine(HDC dc, HFONT font, COLORREF color, const std::wstring& text, 
     SelectObject(dc, old);
 }
 
+void FillRounded(HDC dc, const RECT& rect, int radius, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    HGDIOBJ oldBrush = SelectObject(dc, brush);
+    HGDIOBJ oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
+    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius * 2, radius * 2);
+    SelectObject(dc, oldPen); SelectObject(dc, oldBrush); DeleteObject(brush);
+}
+
+BOOL CALLBACK CloseCalculatorWindow(HWND hwnd, LPARAM) {
+    wchar_t className[128]{};
+    if (GetClassNameW(hwnd, className, static_cast<int>(_countof(className))) &&
+        _wcsicmp(className, kCalculatorClassName) == 0) {
+        DWORD_PTR ignored = 0;
+        SendMessageTimeoutW(hwnd, WM_CLOSE, 0, 0, SMTO_ABORTIFHUNG | SMTO_NORMAL, 2000, &ignored);
+    }
+    return TRUE;
+}
+
+void CloseCalculatorWindows() { EnumWindows(CloseCalculatorWindow, 0); }
+
+RECT FailureButtonRect() { return RECT{264,204,360,234}; }
+
+void PaintFailureWindow(HWND hwnd) {
+    PAINTSTRUCT paint{}; HDC dc = BeginPaint(hwnd, &paint);
+    RECT client{}; GetClientRect(hwnd, &client);
+    HBRUSH background = CreateSolidBrush(RGB(32,32,32)); FillRect(dc, &client, background); DeleteObject(background);
+    RECT frameOne{0,0,client.right,180};
+    HBRUSH frameBrush = CreateSolidBrush(RGB(45,45,45)); FillRect(dc, &frameOne, frameBrush); DeleteObject(frameBrush);
+    RECT title{24,24,client.right-24,52};
+    DrawTextLine(dc,g_titleFont,RGB(255,255,255),L"鸣潮声骸计算器更新失败",title,DT_LEFT|DT_SINGLELINE|DT_VCENTER);
+    ProgressState state; { std::lock_guard lock(g_stateMutex); state = g_state; }
+    RECT error{24,64,client.right-24,104};
+    DrawTextLine(dc,g_bodyFont,RGB(255,255,255),state.detail,error,DT_LEFT|DT_WORDBREAK|DT_END_ELLIPSIS);
+    RECT reminder{24,116,client.right-24,156};
+    DrawTextLine(dc,g_bodyFont,RGB(153,153,153),L"点击确认会自动关闭鸣潮声骸计算器，请重新启动以继续更新。",reminder,DT_LEFT|DT_WORDBREAK);
+    RECT button=FailureButtonRect();
+    if(g_failureButtonDown){++button.top;++button.bottom;}
+    FillRounded(dc,button,4,g_failureButtonDown?RGB(0,120,212):g_failureButtonHot?RGB(175,230,255):RGB(76,194,255));
+    DrawTextLine(dc,g_bodyFont,RGB(0,0,0),L"确定",button,DT_CENTER|DT_SINGLELINE|DT_VCENTER);
+    EndPaint(hwnd,&paint);
+}
+
+void ConfirmFailureAndExit() {
+    CloseCalculatorWindows();
+    if(g_failureWindow)DestroyWindow(g_failureWindow);
+    if(g_window)DestroyWindow(g_window);
+}
+
+LRESULT CALLBACK FailureWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch(message){
+    case WM_PAINT:PaintFailureWindow(hwnd);return 0;
+    case WM_ERASEBKGND:return 1;
+    case WM_MOUSEMOVE:{
+        const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+        const RECT button=FailureButtonRect();
+        const bool hot=PtInRect(&button,point)!=FALSE;
+        if(hot!=g_failureButtonHot){g_failureButtonHot=hot;InvalidateRect(hwnd,nullptr,FALSE);}
+        TRACKMOUSEEVENT tracking{sizeof(tracking),TME_LEAVE,hwnd,0};TrackMouseEvent(&tracking);return 0;
+    }
+    case WM_MOUSELEAVE:g_failureButtonHot=false;InvalidateRect(hwnd,nullptr,FALSE);return 0;
+    case WM_LBUTTONDOWN:{
+        const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};const RECT button=FailureButtonRect();
+        if(PtInRect(&button,point)){g_failureButtonDown=true;SetCapture(hwnd);InvalidateRect(hwnd,nullptr,FALSE);}return 0;
+    }
+    case WM_LBUTTONUP:{
+        const bool wasDown=g_failureButtonDown;g_failureButtonDown=false;ReleaseCapture();
+        const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};const RECT button=FailureButtonRect();
+        if(wasDown&&PtInRect(&button,point)){ConfirmFailureAndExit();return 0;}
+        InvalidateRect(hwnd,nullptr,FALSE);return 0;
+    }
+    case WM_KEYDOWN:if(wParam==VK_RETURN||wParam==VK_ESCAPE){ConfirmFailureAndExit();return 0;}break;
+    case WM_CLOSE:ConfirmFailureAndExit();return 0;
+    case WM_DESTROY:g_failureWindow=nullptr;return 0;
+    default:return DefWindowProcW(hwnd,message,wParam,lParam);
+    }
+    return 0;
+}
+
+void ShowFailureDialog() {
+    if(g_failureWindow){SetForegroundWindow(g_failureWindow);return;}
+    constexpr int width=384,height=258;
+    RECT owner{};GetWindowRect(g_window,&owner);
+    const int x=owner.left+((owner.right-owner.left)-width)/2;
+    const int y=owner.top+((owner.bottom-owner.top)-height)/2;
+    g_failureWindow=CreateWindowExW(WS_EX_TOOLWINDOW,kFailureClassName,L"",WS_POPUP,x,y,width,height,g_window,nullptr,
+        reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(g_window,GWLP_HINSTANCE)),nullptr);
+    if(!g_failureWindow)return;
+    SetWindowRgn(g_failureWindow,CreateRoundRectRgn(0,0,width+1,height+1,14,14),TRUE);
+    EnableWindow(g_window,FALSE);ShowWindow(g_failureWindow,SW_SHOWNORMAL);UpdateWindow(g_failureWindow);SetForegroundWindow(g_failureWindow);
+}
+
 void PaintWindow(HWND hwnd) {
     PAINTSTRUCT paint{}; HDC dc = BeginPaint(hwnd, &paint);
     RECT client{}; GetClientRect(hwnd, &client);
     HBRUSH background = CreateSolidBrush(RGB(32,32,32)); FillRect(dc, &client, background); DeleteObject(background);
     ProgressState state; { std::lock_guard lock(g_stateMutex); state = g_state; }
-    RECT title{24,22,client.right-24,54};
+    RECT title{24,24,client.right-24,52};
     DrawTextLine(dc,g_titleFont,RGB(255,255,255),L"鸣潮声骸计算器更新",title,DT_LEFT|DT_SINGLELINE|DT_VCENTER);
-    RECT phase{24,72,client.right-24,98};
+    RECT phase{24,64,client.right-90,84};
     DrawTextLine(dc,g_bodyFont,state.failed?RGB(255,153,164):RGB(255,255,255),state.phase,phase,DT_LEFT|DT_SINGLELINE|DT_VCENTER);
-    RECT track{24,112,client.right-24,122};
-    HBRUSH trackBrush=CreateSolidBrush(RGB(55,55,55));FillRect(dc,&track,trackBrush);DeleteObject(trackBrush);
+    RECT track{24,96,client.right-24,106};
+    FillRounded(dc,track,3,RGB(55,55,55));
     RECT fill=track;fill.right=fill.left+(fill.right-fill.left)*state.percent/100;
-    HBRUSH fillBrush=CreateSolidBrush(state.failed?RGB(196,43,28):RGB(76,194,255));FillRect(dc,&fill,fillBrush);DeleteObject(fillBrush);
-    RECT percent{client.right-90,76,client.right-24,102};
+    if(fill.right>fill.left)FillRounded(dc,fill,3,state.failed?RGB(196,43,28):RGB(76,194,255));
+    RECT percent{client.right-90,64,client.right-24,84};
     DrawTextLine(dc,g_bodyFont,RGB(150,150,150),std::to_wstring(state.percent)+L"%",percent,DT_RIGHT|DT_SINGLELINE|DT_VCENTER);
-    RECT detail{24,138,client.right-24,190};
+    RECT detail{24,118,client.right-24,client.bottom-24};
     DrawTextLine(dc,g_smallFont,RGB(150,150,150),state.detail,detail,DT_LEFT|DT_WORDBREAK|DT_END_ELLIPSIS);
     EndPaint(hwnd,&paint);
 }
@@ -334,7 +443,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         return 0;
     case kFailureMessage:
         InvalidateRect(hwnd,nullptr,FALSE);
-        MessageBoxW(hwnd,g_state.detail.c_str(),L"鸣潮声骸计算器更新失败",MB_OK|MB_ICONERROR);
+        ShowFailureDialog();
         return 0;
     case WM_TIMER: KillTimer(hwnd,1); DestroyWindow(hwnd); return 0;
     case WM_CLOSE: {
@@ -343,6 +452,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         DestroyWindow(hwnd); return 0;
     }
     case WM_DESTROY:
+        if(g_failureWindow)DestroyWindow(g_failureWindow);
         if(g_titleFont)DeleteObject(g_titleFont);if(g_bodyFont)DeleteObject(g_bodyFont);if(g_smallFont)DeleteObject(g_smallFont);
         PostQuitMessage(0);return 0;
     default:return DefWindowProcW(hwnd,message,wParam,lParam);
@@ -353,20 +463,25 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int showCommand) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    bool argumentsValid = true;
 #ifdef WUWA_UI_PREVIEW
     const std::wstring previewState = PreviewArgument();
     const bool preview = !previewState.empty();
     Arguments arguments; std::wstring error;
     if (preview) ApplyPreviewState(previewState);
-    else if(!ParseArguments(arguments,error)){MessageBoxW(nullptr,error.c_str(),L"鸣潮声骸计算器更新失败",MB_OK|MB_ICONERROR);return 1;}
+    else if(!ParseArguments(arguments,error)){argumentsValid=false;g_state={0,L"更新失败",error,true,false};}
 #else
     Arguments arguments; std::wstring error;
-    if(!ParseArguments(arguments,error)){MessageBoxW(nullptr,error.c_str(),L"鸣潮声骸计算器更新失败",MB_OK|MB_ICONERROR);return 1;}
+    if(!ParseArguments(arguments,error)){argumentsValid=false;g_state={0,L"更新失败",error,true,false};}
 #endif
     WNDCLASSEXW windowClass{sizeof(windowClass)};windowClass.hInstance=instance;windowClass.lpfnWndProc=WindowProc;
     windowClass.lpszClassName=kClassName;windowClass.hCursor=LoadCursorW(nullptr,IDC_ARROW);windowClass.hbrBackground=nullptr;
     windowClass.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(101));windowClass.hIconSm=windowClass.hIcon;
     if(!RegisterClassExW(&windowClass))return 1;
+    WNDCLASSEXW failureClass{sizeof(failureClass)};failureClass.hInstance=instance;failureClass.lpfnWndProc=FailureWindowProc;
+    failureClass.lpszClassName=kFailureClassName;failureClass.hCursor=LoadCursorW(nullptr,IDC_ARROW);failureClass.hbrBackground=nullptr;
+    failureClass.hIcon=windowClass.hIcon;failureClass.hIconSm=windowClass.hIconSm;
+    if(!RegisterClassExW(&failureClass))return 1;
     const int width=520,height=240,x=(GetSystemMetrics(SM_CXSCREEN)-width)/2,y=(GetSystemMetrics(SM_CYSCREEN)-height)/2;
     g_window=CreateWindowExW(0,kClassName,L"鸣潮声骸计算器更新",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,
         x,y,width,height,nullptr,nullptr,instance,nullptr);
@@ -377,11 +492,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int showCommand) {
     g_smallFont=CreateFontW(-14,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
     ShowWindow(g_window,showCommand==SW_HIDE?SW_SHOWNORMAL:showCommand);UpdateWindow(g_window);
 #ifdef WUWA_UI_PREVIEW
-    if (previewState == L"updater-error-dialog")
-        MessageBoxW(g_window,g_state.detail.c_str(),L"鸣潮声骸计算器更新失败",MB_OK|MB_ICONERROR);
-    if (!preview) { std::thread worker(Worker,arguments);worker.detach(); }
+    if (!argumentsValid || previewState == L"updater-error-dialog") ShowFailureDialog();
+    if (!preview && argumentsValid) { std::thread worker(Worker,arguments);worker.detach(); }
 #else
-    std::thread worker(Worker,arguments);worker.detach();
+    if(!argumentsValid)ShowFailureDialog();
+    else{std::thread worker(Worker,arguments);worker.detach();}
 #endif
     MSG message{};while(GetMessageW(&message,nullptr,0,0)>0){TranslateMessage(&message);DispatchMessageW(&message);}return 0;
 }

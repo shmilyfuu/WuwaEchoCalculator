@@ -116,37 +116,42 @@ jobs:
           if (-not $generated.Contains('WICConvertBitmapSource')) { throw 'PNG conversion correction is missing' }
           if (-not $generated.Contains('ocrRunning_=true;rows_={};rowConfidence_.fill(0)')) { throw 'OCR transient state correction is missing' }
           if (-not $generated.Contains('selectedSlot_=0;status_=L"已清空全部记录"')) { throw 'Clear-all target reset is missing' }
-          if ($generated.Contains('1.3.0')) { throw 'Old version literal remains in v1.3.1 source' }
+          if (-not $generated.Contains('kAppVersion[] = L"1.3.2"')) { throw 'Application version is not v1.3.2' }
+          if (-not $generated.Contains('enum class StatusLevel { Normal, Attention, Error }')) { throw 'Three-level status indicator is missing' }
+          $updater = Get-Content native\updater_main.cpp -Raw
+          if ($updater.Contains('MessageBoxW')) { throw 'System updater error dialog is still present' }
+          if (-not $updater.Contains('WuwaEchoUpdaterFailureWindow')) { throw 'Custom updater failure dialog is missing' }
 
-      - name: Assemble v1.3.1 package
+      - name: Assemble v1.3.2 package
         shell: pwsh
         run: |
-          $folder = 'artifact\鸣潮声骸计算器_v1.3.1'
+          $folder = 'artifact\鸣潮声骸计算器_v1.3.2'
           New-Item -ItemType Directory -Force "$folder\models", "$folder\data", "$folder\updates" | Out-Null
           Copy-Item build-native\WuwaEchoCalculator.exe "$folder\鸣潮声骸计算器.exe"
           Copy-Item build-native\WuwaEchoUpdater.exe "$folder\WuwaEchoUpdater.exe"
           Copy-Item build-native\onnxruntime*.dll $folder
           Copy-Item build-models\det.onnx,build-models\rec.onnx,build-models\dict.txt "$folder\models"
           @'
-          鸣潮声骸计算器 v1.3.1
+          鸣潮声骸计算器 v1.3.2
 
-          - 修复 PNG 像素格式转换失败。
-          - 修复新图片识别初始阶段短暂显示手动状态。
-          - 清空全部记录后，记录位置回到声骸 1。
+          - 按统一规范调整确认、导出和更新弹窗布局。
+          - 优化导出标题输入框高亮与超限提示。
+          - 底部状态提示区分正常、注意和错误。
+          - 修复更新助手等待、文件占用和失败退出流程。
 
           请保留 models 目录、WuwaEchoUpdater.exe 和 ONNX Runtime DLL。
           '@ | Set-Content "$folder\版本说明.txt" -Encoding UTF8
-          Compress-Archive -Path $folder -DestinationPath artifact\WuwaEchoCalculator-v1.3.1-windows-x64.zip -CompressionLevel Optimal
-          $hash = (Get-FileHash artifact\WuwaEchoCalculator-v1.3.1-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  WuwaEchoCalculator-v1.3.1-windows-x64.zip" | Set-Content artifact\WuwaEchoCalculator-v1.3.1-windows-x64.zip.sha256 -Encoding ASCII
+          Compress-Archive -Path $folder -DestinationPath artifact\WuwaEchoCalculator-v1.3.2-windows-x64.zip -CompressionLevel Optimal
+          $hash = (Get-FileHash artifact\WuwaEchoCalculator-v1.3.2-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  WuwaEchoCalculator-v1.3.2-windows-x64.zip" | Set-Content artifact\WuwaEchoCalculator-v1.3.2-windows-x64.zip.sha256 -Encoding ASCII
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wuwa-echo-calculator-v1.3.1
+          name: wuwa-echo-calculator-v1.3.2
           path: |
-            artifact/WuwaEchoCalculator-v1.3.1-windows-x64.zip
-            artifact/WuwaEchoCalculator-v1.3.1-windows-x64.zip.sha256
+            artifact/WuwaEchoCalculator-v1.3.2-windows-x64.zip
+            artifact/WuwaEchoCalculator-v1.3.2-windows-x64.zip.sha256
           if-no-files-found: error
           retention-days: 7
 

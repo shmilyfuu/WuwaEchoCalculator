@@ -62,7 +62,7 @@ LRESULT CALLBACK ExportEditProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
 }
 constexpr wchar_t kWindowClass[] = L"WuwaEchoCalculatorNativeWindow";
 constexpr wchar_t kWindowTitle[] = L"鸣潮声骸计算器";
-constexpr wchar_t kAppVersion[] = L"1.3.1";
+constexpr wchar_t kAppVersion[] = L"1.3.2";
 constexpr float kClientWidth = 1188.0f;
 constexpr float kClientHeight = 772.0f;
 constexpr DWORD kWindowStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
@@ -111,6 +111,7 @@ struct RowSelection { int attribute = -1; int value = -1; };
 struct SlotRecord { bool used = false; std::array<RowSelection, 5> rows{}; int subtotal = 0; };
 
 enum class ButtonKind { Gray, Blue, Red };
+enum class StatusLevel { Normal, Attention, Error };
 enum class ControlId {
     None, DropZone, Stop, Again, Record, Clear, Export, Settings, Update, ModalAccept, ModalCancel,
     CardEdit0, CardEdit1, CardEdit2, CardEdit3, CardEdit4,
@@ -154,7 +155,7 @@ public:
         std::wstring ocrError;
         const auto modelDirectory=(std::filesystem::path(modulePath).parent_path()/L"models").wstring();
         ocrReady_=ocr_.Initialize(modelDirectory,ocrError);
-        statusError_=!ocrReady_;
+        statusLevel_=ocrReady_?StatusLevel::Normal:StatusLevel::Error;
         status_=ocrReady_?L"PP-OCRv5 本地模型已就绪":ocrError;
         std::wstring updateError;
         updateManager_.Initialize(std::filesystem::path(modulePath).parent_path().wstring(),kAppVersion,
@@ -162,7 +163,7 @@ public:
                 auto* copy=new NativeUpdateSnapshot(snapshot);
                 if(!PostMessageW(hwnd_,kUpdateCompleteMessage,0,reinterpret_cast<LPARAM>(copy))) delete copy;
             },updateError);
-        if(!updateError.empty()){statusError_=true;status_=updateError;}
+        if(!updateError.empty()){statusLevel_=StatusLevel::Error;status_=updateError;}
         updateReady_=updateManager_.HasPreparedUpdate();
         if(updateReady_){
             updateState_.phase=NativeUpdatePhase::Ready;
@@ -274,7 +275,7 @@ public:
         for (int i = 0; i < 5; ++i) {
             const auto card = Rect(20.0f + i * 232.0f, 500, 220, 212);
             if (!slots_[i].used && Contains(card, x, y)) {
-                selectedSlot_ = i; status_ = L"已选择声骸 " + std::to_wstring(i + 1);
+                selectedSlot_ = i; statusLevel_=StatusLevel::Normal;status_ = L"已选择声骸 " + std::to_wstring(i + 1);
                 InvalidateRect(hwnd_, nullptr, FALSE); return;
             }
         }
@@ -349,9 +350,9 @@ public:
         std::unique_ptr<NativeOcrJobResult> result(rawResult);
         if(ocrThread_.joinable()) ocrThread_.join();
         ocrRunning_=false;
-        if(!result){statusError_=true;status_=L"OCR 返回结果为空";InvalidateRect(hwnd_,nullptr,FALSE);return;}
-        if(result->cancelled){statusError_=false;status_=L"识别已停止";InvalidateRect(hwnd_,nullptr,FALSE);return;}
-        if(!result->error.empty()){statusError_=true;status_=result->error;InvalidateRect(hwnd_,nullptr,FALSE);return;}
+        if(!result){statusLevel_=StatusLevel::Error;status_=L"OCR 返回结果为空";InvalidateRect(hwnd_,nullptr,FALSE);return;}
+        if(result->cancelled){statusLevel_=StatusLevel::Attention;status_=L"识别已停止";InvalidateRect(hwnd_,nullptr,FALSE);return;}
+        if(!result->error.empty()){statusLevel_=StatusLevel::Error;status_=result->error;InvalidateRect(hwnd_,nullptr,FALSE);return;}
         ApplyOcrLines(result->lines);
         InvalidateRect(hwnd_,nullptr,FALSE);
     }
@@ -364,27 +365,27 @@ public:
             phase==NativeUpdatePhase::Downloading||phase==NativeUpdatePhase::Verifying||
             phase==NativeUpdatePhase::LaunchingInstaller;
         if(phase==NativeUpdatePhase::Checking){
-            statusError_=false;status_=L"正在检查更新";
+            statusLevel_=StatusLevel::Attention;status_=L"正在检查更新";
         }else if(phase==NativeUpdatePhase::Available){
-            statusError_=false;status_=L"发现新版本 v"+snapshot->latest.version;
+            statusLevel_=StatusLevel::Attention;status_=L"发现新版本 v"+snapshot->latest.version;
             modal_=ModalKind::UpdateAvailable;ShowWindow(edit_,SW_HIDE);
         }else if(phase==NativeUpdatePhase::UpToDate){
-            statusError_=false;status_=L"当前已是最新版本";
+            statusLevel_=StatusLevel::Normal;status_=L"当前已是最新版本";
             if(snapshot->manual){modal_=ModalKind::UpdateResult;ShowWindow(edit_,SW_HIDE);}
         }else if(phase==NativeUpdatePhase::Preparing||phase==NativeUpdatePhase::Downloading||phase==NativeUpdatePhase::Verifying){
-            statusError_=false;status_=snapshot->message;modal_=ModalKind::UpdateProgress;ShowWindow(edit_,SW_HIDE);
+            statusLevel_=StatusLevel::Attention;status_=snapshot->message;modal_=ModalKind::UpdateProgress;ShowWindow(edit_,SW_HIDE);
         }else if(phase==NativeUpdatePhase::Ready){
-            updateReady_=true;statusError_=false;status_=L"更新包已准备完成";
+            updateReady_=true;statusLevel_=StatusLevel::Normal;status_=L"更新包已准备完成";
             modal_=ModalKind::UpdateReady;ShowWindow(edit_,SW_HIDE);
         }else if(phase==NativeUpdatePhase::Cancelled){
-            statusError_=false;status_=L"已取消下载更新";
+            statusLevel_=StatusLevel::Attention;status_=L"已取消下载更新";
             if(modal_==ModalKind::UpdateProgress)modal_=ModalKind::None;
         }else if(phase==NativeUpdatePhase::Error){
-            statusError_=true;status_=snapshot->error.empty()?snapshot->message:snapshot->error;
+            statusLevel_=StatusLevel::Error;status_=snapshot->error.empty()?snapshot->message:snapshot->error;
             if(snapshot->manual||modal_==ModalKind::UpdateProgress||modal_==ModalKind::UpdateAvailable)
                 modal_=ModalKind::UpdateResult;
         }else if(phase==NativeUpdatePhase::LaunchingInstaller){
-            statusError_=false;status_=L"正在启动更新助手";
+            statusLevel_=StatusLevel::Attention;status_=L"正在启动更新助手";
         }
         InvalidateRect(hwnd_,nullptr,FALSE);
     }
@@ -448,7 +449,7 @@ private:
         const std::wstring state = PreviewArgument(L"--ui-preview");
         if (state.empty()) return false;
 
-        statusError_ = false;
+        statusLevel_ = StatusLevel::Normal;
         status_ = L"PP-OCRv5 本地模型已就绪";
         if (state == L"main-empty") return true;
 
@@ -457,16 +458,18 @@ private:
         LoadPreviewImage(PreviewArgument(L"--preview-image"));
 
         if (state == L"main-recognized") {
+            statusLevel_ = StatusLevel::Attention;
             status_ = L"已识别五条，其中 1 条建议重点核对";
         } else if (state == L"ocr-recognizing") {
             rows_ = {};
             rowConfidence_.fill(0);
             ocrRunning_ = true;
+            statusLevel_ = StatusLevel::Attention;
             status_ = L"正在识别声骸属性";
         } else if (state == L"ocr-error") {
             rows_ = {};
             rowConfidence_.fill(0);
-            statusError_ = true;
+            statusLevel_ = StatusLevel::Attention;
             status_ = L"未识别到有效属性，请调整截图或手动选择";
         } else if (state == L"dropdown-attribute") {
             dropdown_ = {DropdownKind::Attribute, 0, 0, Rect(416,160,168,30)};
@@ -491,69 +494,83 @@ private:
         } else if (state == L"update-checking") {
             updateBusy_ = true;
             updateState_.phase = NativeUpdatePhase::Checking;
+            statusLevel_ = StatusLevel::Attention;
             status_ = L"正在检查更新";
         } else if (state == L"update-available") {
             updateState_.phase = NativeUpdatePhase::Available;
-            updateState_.latest = {true,L"1.3.2",L"v1.3.2",L"鸣潮声骸计算器 v1.3.2",
+            updateState_.latest = {true,L"1.3.3",L"v1.3.3",L"鸣潮声骸计算器 v1.3.3",
                 L"- 优化更新流程界面\n- 修复已知问题\n- 提升本地识别稳定性",L"Gitee"};
             modal_ = ModalKind::UpdateAvailable;
-            status_ = L"发现新版本 v1.3.2";
+            statusLevel_ = StatusLevel::Attention;
+            status_ = L"发现新版本 v1.3.3";
         } else if (state == L"update-preparing") {
             updateBusy_ = true;
             updateState_.phase = NativeUpdatePhase::Preparing;
-            updateState_.latest.version = L"1.3.2";
+            updateState_.latest.version = L"1.3.3";
             updateState_.latest.source = L"Gitee";
             updateState_.message = L"正在准备更新包";
             modal_ = ModalKind::UpdateProgress;
+            statusLevel_ = StatusLevel::Attention;
+            status_ = updateState_.message;
         } else if (state == L"update-downloading") {
             updateBusy_ = true;
             updateState_.phase = NativeUpdatePhase::Downloading;
-            updateState_.latest.version = L"1.3.2";
+            updateState_.latest.version = L"1.3.3";
             updateState_.latest.source = L"Gitee";
             updateState_.message = L"正在下载更新包";
             updateState_.downloadedBytes = 48234496;
             updateState_.totalBytes = 86507520;
             updateState_.bytesPerSecond = 3670016;
             modal_ = ModalKind::UpdateProgress;
+            statusLevel_ = StatusLevel::Attention;
+            status_ = updateState_.message;
         } else if (state == L"update-verifying") {
             updateBusy_ = true;
             updateState_.phase = NativeUpdatePhase::Verifying;
-            updateState_.latest.version = L"1.3.2";
+            updateState_.latest.version = L"1.3.3";
             updateState_.latest.source = L"Gitee";
             updateState_.message = L"正在校验更新包";
             updateState_.downloadedBytes = 86507520;
             updateState_.totalBytes = 86507520;
             modal_ = ModalKind::UpdateProgress;
+            statusLevel_ = StatusLevel::Attention;
+            status_ = updateState_.message;
         } else if (state == L"update-fallback") {
             updateBusy_ = true;
             updateState_.phase = NativeUpdatePhase::Preparing;
-            updateState_.latest.version = L"1.3.2";
+            updateState_.latest.version = L"1.3.3";
             updateState_.latest.source = L"GitHub";
             updateState_.message = L"Gitee 下载失败，正在切换到 GitHub";
             modal_ = ModalKind::UpdateProgress;
+            statusLevel_ = StatusLevel::Attention;
+            status_ = updateState_.message;
         } else if (state == L"update-ready") {
             updateReady_ = true;
             updateState_.phase = NativeUpdatePhase::Ready;
-            updateState_.latest.version = L"1.3.2";
+            updateState_.latest.version = L"1.3.3";
             modal_ = ModalKind::UpdateReady;
+            statusLevel_ = StatusLevel::Normal;
             status_ = L"更新包已准备完成";
         } else if (state == L"update-ready-deferred") {
             updateReady_ = true;
             updateState_.phase = NativeUpdatePhase::Ready;
-            updateState_.latest.version = L"1.3.2";
+            updateState_.latest.version = L"1.3.3";
+            statusLevel_ = StatusLevel::Attention;
             status_ = L"更新包已保留，可稍后安装";
         } else if (state == L"update-latest") {
             updateState_.phase = NativeUpdatePhase::UpToDate;
             modal_ = ModalKind::UpdateResult;
+            statusLevel_ = StatusLevel::Normal;
             status_ = L"当前已是最新版本";
         } else if (state == L"update-error") {
             updateState_.phase = NativeUpdatePhase::Error;
             updateState_.error = L"Gitee：连接更新服务器失败；GitHub：请求更新信息超时";
             modal_ = ModalKind::UpdateResult;
-            statusError_ = true;
+            statusLevel_ = StatusLevel::Error;
             status_ = updateState_.error;
         } else if (state == L"update-cancelled") {
             updateState_.phase = NativeUpdatePhase::Cancelled;
+            statusLevel_ = StatusLevel::Attention;
             status_ = L"已取消下载更新";
         }
         return true;
@@ -639,12 +656,11 @@ private:
             rowConfidence_[used]=parsed.confidence==ParsedOcrConfidence::High?1:2;
             ++used;
         }
-        statusError_=used==0;
         const int medium=static_cast<int>(std::count(rowConfidence_.begin(),rowConfidence_.end(),2));
-        if(used==5&&medium==0)status_=L"已识别五条，请核对后写入";
-        else if(used==5)status_=L"已识别五条，其中 "+std::to_wstring(medium)+L" 条建议重点核对";
-        else if(used>0)status_=L"当前识别到 "+std::to_wstring(used)+L" 条，请通过下拉框补齐";
-        else status_=L"未识别到有效属性，请调整截图或手动选择";
+        if(used==5&&medium==0){statusLevel_=StatusLevel::Normal;status_=L"已识别五条，请核对后写入";}
+        else if(used==5){statusLevel_=StatusLevel::Attention;status_=L"已识别五条，其中 "+std::to_wstring(medium)+L" 条建议重点核对";}
+        else if(used>0){statusLevel_=StatusLevel::Attention;status_=L"当前识别到 "+std::to_wstring(used)+L" 条，请通过下拉框补齐";}
+        else{statusLevel_=StatusLevel::Attention;status_=L"未识别到有效属性，请调整截图或手动选择";}
     }
 
     bool CopyCurrentImage(std::vector<std::uint8_t>& pixels,int& width,int& height,int& stride){
@@ -654,17 +670,17 @@ private:
         return SUCCEEDED(imageWic_->CopyPixels(nullptr,stride,static_cast<UINT>(pixels.size()),pixels.data()));
     }
     void StartOcr(){
-        if(!ocrReady_){statusError_=true;status_=L"OCR 模型尚未就绪";InvalidateRect(hwnd_,nullptr,FALSE);return;}
+        if(!ocrReady_){statusLevel_=StatusLevel::Error;status_=L"OCR 模型尚未就绪";InvalidateRect(hwnd_,nullptr,FALSE);return;}
         if(ocrRunning_){ocrCancel_.store(true);if(ocrThread_.joinable())ocrThread_.join();ocrRunning_=false;}
         std::vector<std::uint8_t> pixels;int width=0,height=0,stride=0;
-        if(!CopyCurrentImage(pixels,width,height,stride)){statusError_=true;status_=L"无法读取当前图片像素";InvalidateRect(hwnd_,nullptr,FALSE);return;}
-        ocrCancel_.store(false);ocrRunning_=true;rows_={};rowConfidence_.fill(0);statusError_=false;status_=L"正在识别声骸属性";InvalidateRect(hwnd_,nullptr,FALSE);
+        if(!CopyCurrentImage(pixels,width,height,stride)){statusLevel_=StatusLevel::Error;status_=L"无法读取当前图片像素";InvalidateRect(hwnd_,nullptr,FALSE);return;}
+        ocrCancel_.store(false);ocrRunning_=true;rows_={};rowConfidence_.fill(0);statusLevel_=StatusLevel::Attention;status_=L"正在识别声骸属性";InvalidateRect(hwnd_,nullptr,FALSE);
         ocrThread_=std::thread([this,pixels=std::move(pixels),width,height,stride]() mutable {
             auto* result=new NativeOcrJobResult(ocr_.Recognize(pixels,width,height,stride,ocrCancel_));
             PostMessageW(hwnd_,kOcrCompleteMessage,0,reinterpret_cast<LPARAM>(result));
         });
     }
-    void StopOcr(){if(!ocrRunning_)return;ocrCancel_.store(true);statusError_=false;status_=L"正在停止识别";InvalidateRect(hwnd_,nullptr,FALSE);}
+    void StopOcr(){if(!ocrRunning_)return;ocrCancel_.store(true);statusLevel_=StatusLevel::Attention;status_=L"正在停止识别";InvalidateRect(hwnd_,nullptr,FALSE);}
 
     static std::wstring FormatTransferSize(std::uint64_t bytes){
         wchar_t buffer[64]{};
@@ -680,10 +696,33 @@ private:
         if(updateBusy_)return L"检查中";
         return L"检查更新";
     }
-    D2D1_RECT_F UpdatePrimaryRect() const {
-        return modal_==ModalKind::UpdateResult?Rect(546,513,96,30):Rect(572,513,104,30);
+    D2D1_RECT_F CenteredModalBox(float width,float height) const {
+        return Rect((kClientWidth-width)/2.0f,(kClientHeight-height)/2.0f,width,height);
     }
-    D2D1_RECT_F UpdateSecondaryRect() const { return Rect(684,513,104,30); }
+    D2D1_RECT_F UpdateModalBox() const {
+        if(modal_==ModalKind::UpdateAvailable)return CenteredModalBox(460,356);
+        if(modal_==ModalKind::UpdateProgress)return CenteredModalBox(460,343);
+        if(modal_==ModalKind::UpdateReady)return CenteredModalBox(460,321);
+        const bool failed=updateState_.phase==NativeUpdatePhase::Error;
+        return CenteredModalBox(460,failed?226.0f:186.0f);
+    }
+    float UpdateFrameOneHeight() const {
+        if(modal_==ModalKind::UpdateAvailable)return 278;
+        if(modal_==ModalKind::UpdateProgress)return 265;
+        if(modal_==ModalKind::UpdateReady)return 243;
+        return updateState_.phase==NativeUpdatePhase::Error?148.0f:108.0f;
+    }
+    D2D1_RECT_F UpdatePrimaryRect() const {
+        const auto box=UpdateModalBox();
+        const float y=box.top+UpdateFrameOneHeight()+24;
+        const float right=box.right-24;
+        if(modal_==ModalKind::UpdateAvailable||modal_==ModalKind::UpdateReady)return Rect(right-200,y,96,30);
+        return Rect(right-96,y,96,30);
+    }
+    D2D1_RECT_F UpdateSecondaryRect() const {
+        const auto box=UpdateModalBox();
+        return Rect(box.right-120,box.top+UpdateFrameOneHeight()+24,96,30);
+    }
 
     void CreateTextFormats() {
         CreateFormat(20, DWRITE_FONT_WEIGHT_SEMI_BOLD, title_.GetAddressOf());
@@ -755,6 +794,28 @@ private:
     void StrokeRound(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b, const D2D1_RECT_F& r, float radius, D2D1_COLOR_F c, float width=1) {
         b->SetColor(c); rt->DrawRoundedRectangle(D2D1::RoundedRect(r,radius,radius),b,width);
     }
+    void DrawDialogFrame(ID2D1RenderTarget* rt,ID2D1SolidColorBrush* b,const D2D1_RECT_F& box,float frameOneHeight){
+        FillRound(rt,b,box,7,Hex(0x202020));
+        const auto frameOne=Rect(box.left,box.top,box.right-box.left,frameOneHeight);
+        FillRound(rt,b,frameOne,7,Hex(0x2d2d2d));
+        Fill(rt,b,Rect(frameOne.left,frameOne.top+7,frameOne.right-frameOne.left,frameOneHeight-7),Hex(0x2d2d2d));
+    }
+    void DrawInputUnderline(ID2D1RenderTarget* rt,ID2D1SolidColorBrush* b,const D2D1_RECT_F& input,D2D1_COLOR_F color){
+        ComPtr<ID2D1PathGeometry> path;
+        if(FAILED(d2dFactory_->CreatePathGeometry(path.GetAddressOf())))return;
+        ComPtr<ID2D1GeometrySink> sink;
+        if(FAILED(path->Open(sink.GetAddressOf())))return;
+        constexpr float radius=4.0f;
+        const float bottom=input.bottom-.5f;
+        sink->BeginFigure(D2D1::Point2F(input.left+.5f,bottom-radius),D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(input.left+radius,bottom),D2D1::SizeF(radius,radius),0,
+            D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE,D2D1_ARC_SIZE_SMALL));
+        sink->AddLine(D2D1::Point2F(input.right-radius,bottom));
+        sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(input.right-.5f,bottom-radius),D2D1::SizeF(radius,radius),0,
+            D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE,D2D1_ARC_SIZE_SMALL));
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        if(SUCCEEDED(sink->Close())){b->SetColor(color);rt->DrawGeometry(path.Get(),b,1.0f);}
+    }
     void Text(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b, const std::wstring& text,
               const D2D1_RECT_F& r, IDWriteTextFormat* fmt, D2D1_COLOR_F c,
               DWRITE_TEXT_ALIGNMENT align=DWRITE_TEXT_ALIGNMENT_LEADING,
@@ -766,7 +827,7 @@ private:
 
     void DrawTopBar(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b) {
         Text(rt,b,L"鸣潮声骸计算器",Rect(20,20,140,28),title_.Get(),Hex(0xffffff));
-        Text(rt,b,L"v1.3.1",Rect(165,26,60,22),version_.Get(),Hex(0xffffff));
+        Text(rt,b,L"v"+std::wstring(kAppVersion),Rect(165,26,60,22),version_.Get(),Hex(0xffffff));
         Text(rt,b,L"鸣潮声骸的本地识别评分工具",Rect(20,48,220,20),body14_.Get(),Hex(0xffffff,.60f));
         DrawButton(rt,b,ControlId::Settings,Rect(882,15,96,30),L"设置",ButtonKind::Gray,false);
         DrawButton(rt,b,ControlId::Update,Rect(986,15,96,30),UpdateButtonLabel(),updateReady_?ButtonKind::Blue:ButtonKind::Gray,!updateBusy_);
@@ -912,10 +973,11 @@ private:
     }
 
     void DrawStatus(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b) {
-        b->SetColor(Hex(statusError_?0xff99a4:0xfce100));
+        const UINT indicator=statusLevel_==StatusLevel::Normal?0x6ccb5f:statusLevel_==StatusLevel::Attention?0xfce100:0xff99a4;
+        b->SetColor(Hex(indicator));
         rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(24,742),4,4),b);
         Text(rt,b,status_,Rect(34,732,900,20),body14_.Get(),Hex(0xffffff,.60f));
-        Text(rt,b,L"v1.3.1 · Direct2D",Rect(1000,732,168,20),body11_.Get(),Hex(0xffffff,.60f),DWRITE_TEXT_ALIGNMENT_TRAILING);
+        Text(rt,b,L"v"+std::wstring(kAppVersion)+L" · Direct2D",Rect(1000,732,168,20),body11_.Get(),Hex(0xffffff,.60f),DWRITE_TEXT_ALIGNMENT_TRAILING);
     }
 
     void DrawButton(ID2D1RenderTarget* rt,ID2D1SolidColorBrush* b,ControlId id,const D2D1_RECT_F& original,const std::wstring& label,ButtonKind kind,bool enabled,float fontSize=14){
@@ -954,25 +1016,21 @@ private:
             DrawUpdateModal(rt,b);return;
         }
         if(modal_==ModalKind::Confirm){
-            const auto box=Rect(402,287,384,198);
-            FillRound(rt,b,box,7,Hex(0x202020));
-            FillRound(rt,b,Rect(402,287,384,108),7,Hex(0x2d2d2d));
-            Fill(rt,b,Rect(402,294,384,101),Hex(0x2d2d2d));
-            Text(rt,b,confirmTitle_,Rect(426,311,336,28),title_.Get(),Hex(0xffffff));
-            Text(rt,b,confirmMessage_,Rect(426,351,336,20),body14_.Get(),Hex(0xffffff));
-            DrawButton(rt,b,ControlId::ModalAccept,Rect(562,419,96,30),confirmAcceptText_,ButtonKind::Blue,true);
-            DrawButton(rt,b,ControlId::ModalCancel,Rect(666,419,96,30),L"取消",ButtonKind::Gray,true);
+            const auto box=CenteredModalBox(384,186);
+            DrawDialogFrame(rt,b,box,108);
+            Text(rt,b,confirmTitle_,Rect(box.left+24,box.top+24,336,28),title_.Get(),Hex(0xffffff));
+            Text(rt,b,confirmMessage_,Rect(box.left+24,box.top+64,336,20),body14_.Get(),Hex(0xffffff));
+            DrawButton(rt,b,ControlId::ModalAccept,Rect(box.right-224,box.top+132,96,30),confirmAcceptText_,ButtonKind::Blue,true);
+            DrawButton(rt,b,ControlId::ModalCancel,Rect(box.right-120,box.top+132,96,30),L"取消",ButtonKind::Gray,true);
         } else {
-            const auto box=Rect(402,287,384,198);
-            FillRound(rt,b,box,7,Hex(0x202020));
-            FillRound(rt,b,Rect(402,287,384,120),7,Hex(0x2d2d2d));
-            Fill(rt,b,Rect(402,294,384,113),Hex(0x2d2d2d));
-            Text(rt,b,L"导出记录",Rect(426,311,336,28),title_.Get(),Hex(0xffffff));
+            const auto box=CenteredModalBox(384,198);
+            DrawDialogFrame(rt,b,box,120);
+            Text(rt,b,L"导出记录",Rect(box.left+24,box.top+24,336,28),title_.Get(),Hex(0xffffff));
             const auto input=ExportInputRect();
             const auto inputBase=Rect(input.left,input.top+1,input.right-input.left,30);
             FillRound(rt,b,inputBase,4,Hex(0x000000,.30f));
             StrokeRound(rt,b,inputBase,4,Hex(0xffffff,.10f));
-            if(exportEditFocused_) Fill(rt,b,Rect(input.left,input.top+30,input.right-input.left,2),exportTitleInvalid_?Hex(0xfce100):Hex(0x4cc2ff));
+            if(exportEditFocused_)DrawInputUnderline(rt,b,input,exportTitleInvalid_?Hex(0xfce100):Hex(0x4cc2ff));
             if(exportTitleInvalid_){
                 ComPtr<ID2D1PathGeometry> arrow;
                 if(SUCCEEDED(d2dFactory_->CreatePathGeometry(arrow.GetAddressOf()))){
@@ -992,54 +1050,54 @@ private:
                 FillRound(rt,b,hint,3,Hex(0x454545));
                 Text(rt,b,L"最多可输入12个字符，超过最大长度限制，请重新编辑",Rect(446,384,241,20),body10_.Get(),Hex(0xffffff,.60f));
             }
-            DrawButton(rt,b,ControlId::ModalAccept,Rect(562,431,96,30),L"确定",ButtonKind::Blue,true);
-            DrawButton(rt,b,ControlId::ModalCancel,Rect(666,431,96,30),L"取消",ButtonKind::Gray,true);
+            DrawButton(rt,b,ControlId::ModalAccept,Rect(box.right-224,box.top+144,96,30),L"确定",ButtonKind::Blue,true);
+            DrawButton(rt,b,ControlId::ModalCancel,Rect(box.right-120,box.top+144,96,30),L"取消",ButtonKind::Gray,true);
         }
     }
 
     void DrawUpdateModal(ID2D1RenderTarget* rt,ID2D1SolidColorBrush* b){
-        const auto box=Rect(364,205,460,362);
-        FillRound(rt,b,box,7,Hex(0x202020));
-        FillRound(rt,b,Rect(364,205,460,284),7,Hex(0xffffff,.06f));
-        Fill(rt,b,Rect(364,482,460,7),Hex(0x202020));
+        const auto box=UpdateModalBox();
+        const float x=box.left+24;
+        const float contentTop=box.top+64;
+        DrawDialogFrame(rt,b,box,UpdateFrameOneHeight());
         if(modal_==ModalKind::UpdateAvailable){
-            Text(rt,b,L"发现新版本",Rect(388,229,412,28),title_.Get(),Hex(0xffffff));
-            Text(rt,b,L"v1.3.1  →  v"+updateState_.latest.version,Rect(388,269,412,22),version_.Get(),Hex(0x4cc2ff));
-            Text(rt,b,L"下载来源："+(updateState_.latest.source.empty()?L"Gitee / GitHub":updateState_.latest.source),Rect(388,299,412,20),body12_.Get(),Hex(0xffffff,.60f));
-            Text(rt,b,L"更新内容",Rect(388,331,412,20),body12Bold_.Get(),Hex(0xffffff));
+            Text(rt,b,L"发现新版本",Rect(x,box.top+24,412,28),title_.Get(),Hex(0xffffff));
+            Text(rt,b,L"v"+std::wstring(kAppVersion)+L"  →  v"+updateState_.latest.version,Rect(x,contentTop,412,22),version_.Get(),Hex(0x4cc2ff));
+            Text(rt,b,L"下载来源："+(updateState_.latest.source.empty()?L"Gitee / GitHub":updateState_.latest.source),Rect(x,contentTop+30,412,20),body12_.Get(),Hex(0xffffff,.60f));
+            Text(rt,b,L"更新内容",Rect(x,contentTop+62,412,20),body12Bold_.Get(),Hex(0xffffff));
             const std::wstring notes=updateState_.latest.notes.empty()?L"该版本未提供更新说明。":updateState_.latest.notes;
-            Text(rt,b,notes,Rect(388,357,412,102),updateBody_.Get(),Hex(0xffffff,.70f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            Text(rt,b,notes,Rect(x,contentTop+88,412,102),updateBody_.Get(),Hex(0xffffff,.70f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
             DrawButton(rt,b,ControlId::ModalAccept,UpdatePrimaryRect(),L"下载更新",ButtonKind::Blue,true);
             DrawButton(rt,b,ControlId::ModalCancel,UpdateSecondaryRect(),L"稍后",ButtonKind::Gray,true);
         }else if(modal_==ModalKind::UpdateProgress){
-            Text(rt,b,L"正在下载更新",Rect(388,229,412,28),title_.Get(),Hex(0xffffff));
-            const std::wstring version=updateState_.latest.version.empty()?L"":L"v1.3.1  →  v"+updateState_.latest.version;
-            Text(rt,b,version,Rect(388,269,412,22),version_.Get(),Hex(0x4cc2ff));
-            Text(rt,b,updateState_.message.empty()?L"正在准备更新包":updateState_.message,Rect(388,310,412,20),body14_.Get(),Hex(0xffffff));
-            const auto track=Rect(388,348,412,8);FillRound(rt,b,track,4,Hex(0xffffff,.08f));
+            Text(rt,b,L"正在下载更新",Rect(x,box.top+24,412,28),title_.Get(),Hex(0xffffff));
+            const std::wstring version=updateState_.latest.version.empty()?L"":L"v"+std::wstring(kAppVersion)+L"  →  v"+updateState_.latest.version;
+            Text(rt,b,version,Rect(x,contentTop,412,22),version_.Get(),Hex(0x4cc2ff));
+            Text(rt,b,updateState_.message.empty()?L"正在准备更新包":updateState_.message,Rect(x,contentTop+41,412,20),body14_.Get(),Hex(0xffffff));
+            const auto track=Rect(x,contentTop+79,412,8);FillRound(rt,b,track,4,Hex(0xffffff,.08f));
             float progress=0.0f;
             if(updateState_.totalBytes>0)progress=std::clamp(static_cast<float>(updateState_.downloadedBytes)/static_cast<float>(updateState_.totalBytes),0.0f,1.0f);
             else if(updateState_.phase==NativeUpdatePhase::Verifying)progress=1.0f;
-            if(progress>0)FillRound(rt,b,Rect(388,348,412*progress,8),4,Hex(0x4cc2ff));
+            if(progress>0)FillRound(rt,b,Rect(x,contentTop+79,412*progress,8),4,Hex(0x4cc2ff));
             const int percent=updateState_.totalBytes>0?static_cast<int>(progress*100.0f):(updateState_.phase==NativeUpdatePhase::Verifying?100:0);
-            Text(rt,b,std::to_wstring(percent)+L"%",Rect(388,366,412,20),body12Bold_.Get(),Hex(0xffffff),DWRITE_TEXT_ALIGNMENT_TRAILING);
+            Text(rt,b,std::to_wstring(percent)+L"%",Rect(x,contentTop+97,412,20),body12Bold_.Get(),Hex(0xffffff),DWRITE_TEXT_ALIGNMENT_TRAILING);
             const std::wstring transferred=FormatTransferSize(updateState_.downloadedBytes)+L" / "+(updateState_.totalBytes?FormatTransferSize(updateState_.totalBytes):L"未知大小");
-            Text(rt,b,transferred,Rect(388,394,250,20),body12_.Get(),Hex(0xffffff,.60f));
-            Text(rt,b,updateState_.bytesPerSecond?FormatTransferSize(updateState_.bytesPerSecond)+L"/s":L"",Rect(650,394,150,20),body12_.Get(),Hex(0xffffff,.60f),DWRITE_TEXT_ALIGNMENT_TRAILING);
-            Text(rt,b,L"来源："+(updateState_.latest.source.empty()?L"Gitee / GitHub":updateState_.latest.source),Rect(388,426,412,20),body12_.Get(),Hex(0xffffff,.60f));
+            Text(rt,b,transferred,Rect(x,contentTop+125,250,20),body12_.Get(),Hex(0xffffff,.60f));
+            Text(rt,b,updateState_.bytesPerSecond?FormatTransferSize(updateState_.bytesPerSecond)+L"/s":L"",Rect(x+262,contentTop+125,150,20),body12_.Get(),Hex(0xffffff,.60f),DWRITE_TEXT_ALIGNMENT_TRAILING);
+            Text(rt,b,L"来源："+(updateState_.latest.source.empty()?L"Gitee / GitHub":updateState_.latest.source),Rect(x,contentTop+157,412,20),body12_.Get(),Hex(0xffffff,.60f));
             DrawButton(rt,b,ControlId::ModalCancel,UpdateSecondaryRect(),L"取消下载",ButtonKind::Gray,updateState_.phase==NativeUpdatePhase::Downloading||updateState_.phase==NativeUpdatePhase::Preparing);
         }else if(modal_==ModalKind::UpdateReady){
-            Text(rt,b,L"更新已准备完成",Rect(388,229,412,28),title_.Get(),Hex(0xffffff));
+            Text(rt,b,L"更新已准备完成",Rect(x,box.top+24,412,28),title_.Get(),Hex(0xffffff));
             const std::wstring version=updateState_.latest.version.empty()?updateManager_.PreparedVersion():updateState_.latest.version;
-            Text(rt,b,L"新版本 v"+version+L" 已下载，可以立即安装。",Rect(388,277,412,24),body14_.Get(),Hex(0xffffff));
-            Text(rt,b,L"立即更新会关闭计算器，替换程序文件并自动重新启动。声骸记录和设置文件会保留。",Rect(388,321,412,70),updateBody_.Get(),Hex(0xffffff,.70f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-            Text(rt,b,L"选择稍后后，顶部按钮会变为蓝色“更新”。",Rect(388,412,412,20),body12_.Get(),Hex(0xffffff,.60f));
+            Text(rt,b,L"新版本 v"+version+L" 已下载，可以立即安装。",Rect(x,contentTop,412,24),body14_.Get(),Hex(0xffffff));
+            Text(rt,b,L"立即更新会关闭计算器，替换程序文件并自动重新启动。声骸记录和设置文件会保留。",Rect(x,contentTop+44,412,70),updateBody_.Get(),Hex(0xffffff,.70f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            Text(rt,b,L"选择稍后后，顶部按钮会变为蓝色“更新”。",Rect(x,contentTop+135,412,20),body12_.Get(),Hex(0xffffff,.60f));
             DrawButton(rt,b,ControlId::ModalAccept,UpdatePrimaryRect(),L"立即更新",ButtonKind::Blue,true);
             DrawButton(rt,b,ControlId::ModalCancel,UpdateSecondaryRect(),L"稍后",ButtonKind::Gray,true);
         }else{
             const bool failed=updateState_.phase==NativeUpdatePhase::Error;
-            Text(rt,b,failed?L"更新操作失败":L"检查更新",Rect(388,229,412,28),title_.Get(),Hex(0xffffff));
-            Text(rt,b,failed?(updateState_.error.empty()?updateState_.message:updateState_.error):L"当前已是最新版本 v1.3.1",Rect(388,285,412,108),updateBody_.Get(),failed?Hex(0xff99a4):Hex(0xffffff,.75f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            Text(rt,b,failed?L"更新操作失败":L"检查更新",Rect(x,box.top+24,412,28),title_.Get(),Hex(0xffffff));
+            Text(rt,b,failed?(updateState_.error.empty()?updateState_.message:updateState_.error):L"当前已是最新版本 v"+std::wstring(kAppVersion),Rect(x,contentTop,412,failed?60.0f:20.0f),updateBody_.Get(),failed?Hex(0xff99a4):Hex(0xffffff,.75f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
             DrawButton(rt,b,ControlId::ModalAccept,UpdatePrimaryRect(),L"确定",ButtonKind::Blue,true);
         }
     }
@@ -1079,8 +1137,9 @@ private:
 
     ControlId HitTestButton(float x,float y) const {
         if(modal_==ModalKind::Confirm){
-            if(Contains(Rect(562,419,96,30),x,y))return ControlId::ModalAccept;
-            if(Contains(Rect(666,419,96,30),x,y))return ControlId::ModalCancel;
+            const auto box=CenteredModalBox(384,186);
+            if(Contains(Rect(box.right-224,box.top+132,96,30),x,y))return ControlId::ModalAccept;
+            if(Contains(Rect(box.right-120,box.top+132,96,30),x,y))return ControlId::ModalCancel;
             return ControlId::None;
         }
         if(modal_==ModalKind::Export){
@@ -1130,7 +1189,7 @@ private:
                 if(updateState_.latest.version.empty())updateState_.latest.version=updateManager_.PreparedVersion();
                 modal_=ModalKind::UpdateReady;ShowWindow(edit_,SW_HIDE);
             }else{
-                updateBusy_=true;updateState_.phase=NativeUpdatePhase::Checking;statusError_=false;status_=L"正在检查更新";
+                updateBusy_=true;updateState_.phase=NativeUpdatePhase::Checking;statusLevel_=StatusLevel::Attention;status_=L"正在检查更新";
                 updateManager_.Check(true);
             }
             return;
@@ -1147,7 +1206,7 @@ private:
     }
 
     void RecordCurrent() {
-        if(!RowsValid()){statusError_=true;status_=L"请补齐五条属性及档位，并避免重复属性";return;}
+        if(!RowsValid()){statusLevel_=StatusLevel::Attention;status_=L"请补齐五条属性及档位，并避免重复属性";return;}
         if(slots_[selectedSlot_].used){
             pendingSlot_=selectedSlot_;
             OpenConfirm(ConfirmAction::OverwriteSlot,L"覆盖记录",L"声骸 "+std::to_wstring(selectedSlot_+1)+L" 已有记录，确认覆盖？",L"覆盖",false);
@@ -1158,7 +1217,7 @@ private:
     void SaveCurrentToSlot(int slot){
         const bool wasUsed=slots_[slot].used;
         slots_[slot].used=true;slots_[slot].rows=rows_;slots_[slot].subtotal=CurrentSubtotal();
-        statusError_=false;status_=L"已记录到声骸 "+std::to_wstring(slot+1);
+        statusLevel_=StatusLevel::Normal;status_=L"已记录到声骸 "+std::to_wstring(slot+1);
         if(!wasUsed){
             for(int offset=1;offset<=5;++offset){
                 const int candidate=(slot+offset)%5;
@@ -1166,7 +1225,7 @@ private:
             }
         }
     }
-    void LoadSlot(int slot){rows_=slots_[slot].rows;selectedSlot_=slot;statusError_=false;status_=L"已载入声骸 "+std::to_wstring(slot+1)+L"，修改后可覆盖";}
+    void LoadSlot(int slot){rows_=slots_[slot].rows;selectedSlot_=slot;statusLevel_=StatusLevel::Normal;status_=L"已载入声骸 "+std::to_wstring(slot+1)+L"，修改后可覆盖";}
 
     void OpenConfirm(ConfirmAction action,std::wstring title,std::wstring message,std::wstring accept,bool red){
         dropdown_={}; modal_=ModalKind::Confirm;confirmAction_=action;confirmTitle_=std::move(title);confirmMessage_=std::move(message);confirmAcceptText_=std::move(accept);confirmAcceptRed_=red;ShowWindow(edit_,SW_HIDE);InvalidateRect(hwnd_,nullptr,FALSE);
@@ -1180,7 +1239,7 @@ private:
             return;
         }
         if(modal_==ModalKind::UpdateReady){
-            updateReady_=true;statusError_=false;status_=L"更新包已保留，可稍后安装";CloseModal();return;
+            updateReady_=true;statusLevel_=StatusLevel::Attention;status_=L"更新包已保留，可稍后安装";CloseModal();return;
         }
         CloseModal();
     }
@@ -1192,10 +1251,10 @@ private:
         if(modal_==ModalKind::UpdateReady){
             std::wstring error;
             if(updateManager_.LaunchPreparedInstaller(error)){
-                updateBusy_=true;statusError_=false;status_=L"正在启动更新助手";
+                updateBusy_=true;statusLevel_=StatusLevel::Attention;status_=L"正在启动更新助手";
                 PostMessageW(hwnd_,WM_CLOSE,0,0);
             }else{
-                updateState_.phase=NativeUpdatePhase::Error;updateState_.error=error;statusError_=true;status_=error;modal_=ModalKind::UpdateResult;
+                updateState_.phase=NativeUpdatePhase::Error;updateState_.error=error;statusLevel_=StatusLevel::Error;status_=error;modal_=ModalKind::UpdateResult;
             }
             InvalidateRect(hwnd_,nullptr,FALSE);return;
         }
@@ -1203,11 +1262,12 @@ private:
         if(modal_==ModalKind::Export){
             exportTitleInvalid_=WeightedTitleLength(GetEditText())>12.0f;
             if(exportTitleInvalid_){InvalidateRect(hwnd_,nullptr,FALSE);return;}
-            if(SaveExportPng(GetEditText())){statusError_=false;status_=L"记录图片已导出";}else{statusError_=true;status_=exportError_.empty()?L"导出已取消或保存失败":exportError_;}
+            if(SaveExportPng(GetEditText())){statusLevel_=StatusLevel::Normal;status_=L"记录图片已导出";}
+            else{statusLevel_=exportError_==L"已取消导出"?StatusLevel::Attention:StatusLevel::Error;status_=exportError_.empty()?L"导出已取消或保存失败":exportError_;}
             CloseModal();return;
         }
-        if(confirmAction_==ConfirmAction::ClearAll){for(auto&s:slots_)s={};selectedSlot_=0;status_=L"已清空全部记录";statusError_=false;}
-        else if(confirmAction_==ConfirmAction::DeleteSlot&&pendingSlot_>=0){slots_[pendingSlot_]={};status_=L"已删除声骸 "+std::to_wstring(pendingSlot_+1);statusError_=false;}
+        if(confirmAction_==ConfirmAction::ClearAll){for(auto&s:slots_)s={};selectedSlot_=0;status_=L"已清空全部记录";statusLevel_=StatusLevel::Normal;}
+        else if(confirmAction_==ConfirmAction::DeleteSlot&&pendingSlot_>=0){slots_[pendingSlot_]={};status_=L"已删除声骸 "+std::to_wstring(pendingSlot_+1);statusLevel_=StatusLevel::Normal;}
         else if(confirmAction_==ConfirmAction::OverwriteSlot&&pendingSlot_>=0){SaveCurrentToSlot(pendingSlot_);}
         CloseModal();
     }
@@ -1231,7 +1291,7 @@ private:
         if(dropdown_.kind==DropdownKind::Attribute){rows_[dropdown_.row].attribute=index;rows_[dropdown_.row].value=-1;rowConfidence_[dropdown_.row]=3;}
         else if(dropdown_.kind==DropdownKind::Value){rows_[dropdown_.row].value=index;rowConfidence_[dropdown_.row]=3;}
         else if(dropdown_.kind==DropdownKind::Slot){selectedSlot_=index;}
-        dropdown_={};statusError_=false;status_=L"已更新手动选择";InvalidateRect(hwnd_,nullptr,FALSE);return true;
+        dropdown_={};statusLevel_=StatusLevel::Normal;status_=L"已更新手动选择";InvalidateRect(hwnd_,nullptr,FALSE);return true;
     }
 
     void PickImageFile(){
@@ -1240,7 +1300,7 @@ private:
     }
     void LoadImageFile(const std::wstring& path){
         ComPtr<IWICBitmapDecoder> decoder;HRESULT hr=wicFactory_->CreateDecoderFromFilename(path.c_str(),nullptr,GENERIC_READ,WICDecodeMetadataCacheOnLoad,decoder.GetAddressOf());
-        if(FAILED(hr)){statusError_=true;status_=L"无法读取图片";InvalidateRect(hwnd_,nullptr,FALSE);return;}
+        if(FAILED(hr)){statusLevel_=StatusLevel::Error;status_=L"无法读取图片";InvalidateRect(hwnd_,nullptr,FALSE);return;}
         ComPtr<IWICBitmapFrameDecode> frame;decoder->GetFrame(0,frame.GetAddressOf());SetImageSource(frame.Get(),std::filesystem::path(path).filename().wstring());
     }
     void ImportClipboardBitmap(){
@@ -1250,9 +1310,9 @@ private:
     }
     void SetImageSource(IWICBitmapSource* source,const std::wstring& name){
         ComPtr<IWICFormatConverter> converter;wicFactory_->CreateFormatConverter(converter.GetAddressOf());
-        if(FAILED(converter->Initialize(source,GUID_WICPixelFormat32bppPBGRA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom))){statusError_=true;status_=L"图片格式转换失败";return;}
+        if(FAILED(converter->Initialize(source,GUID_WICPixelFormat32bppPBGRA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom))){statusLevel_=StatusLevel::Error;status_=L"图片格式转换失败";return;}
         imageWic_.Reset();wicFactory_->CreateBitmapFromSource(converter.Get(),WICBitmapCacheOnLoad,imageWic_.GetAddressOf());
-        imageWic_->GetSize(&imageW_,&imageH_);imageName_=name;RecreateD2DBitmap();statusError_=false;status_=L"已导入 "+name;InvalidateRect(hwnd_,nullptr,FALSE);StartOcr();
+        imageWic_->GetSize(&imageW_,&imageH_);imageName_=name;RecreateD2DBitmap();statusLevel_=StatusLevel::Normal;status_=L"已导入 "+name;InvalidateRect(hwnd_,nullptr,FALSE);StartOcr();
     }
     void RecreateD2DBitmap(){imageD2D_.Reset();if(renderTarget_&&imageWic_)renderTarget_->CreateBitmapFromWicBitmap(imageWic_.Get(),nullptr,imageD2D_.GetAddressOf());}
     void LoadEmbeddedIcon(const char* encoded, ComPtr<ID2D1Bitmap>& target){
@@ -1313,7 +1373,7 @@ private:
         FillRound(rt.Get(),b.Get(),Rect(292,514,244,155),3,Hex(0xffffff,.03f));
         DrawExportMetric(rt.Get(),b.Get(),L"总分",std::to_wstring(TotalScore()),L"5件声骸总分",320,549);
         wchar_t avg[32]{};swprintf_s(avg,L"%.1f",TotalScore()/5.0);DrawExportMetric(rt.Get(),b.Get(),L"平均分",avg,L"5件声骸平均分",428,549);
-        Text(rt.Get(),b.Get(),customTitle.empty()?L"鸣潮声骸计算器 v1.3.1":customTitle,Rect(40,687,496,22),version_.Get(),Hex(0xffffff),DWRITE_TEXT_ALIGNMENT_TRAILING);
+        Text(rt.Get(),b.Get(),customTitle.empty()?L"鸣潮声骸计算器 v"+std::wstring(kAppVersion):customTitle,Rect(40,687,496,22),version_.Get(),Hex(0xffffff),DWRITE_TEXT_ALIGNMENT_TRAILING);
         hr=rt->EndDraw();
         if(FAILED(hr)){wchar_t code[32]{};swprintf_s(code,L"（0x%08X）",static_cast<unsigned int>(hr));exportError_=L"绘制导出图片失败"+std::wstring(code);return false;}
         star.Reset();b.Reset();rt.Reset();
@@ -1391,7 +1451,7 @@ private:
     bool ocrReady_ = false;
     bool ocrRunning_ = false;
     bool topmost_ = false;
-    bool statusError_ = false;
+    StatusLevel statusLevel_ = StatusLevel::Normal;
     bool exportTitleInvalid_ = false;
     bool exportEditFocused_ = false;
     bool updateReady_ = false;
@@ -1456,15 +1516,21 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam){
 
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int showCommand){
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    if(FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)))return 1;
+    HANDLE singleInstance=CreateMutexW(nullptr,TRUE,L"Local\\WuwaEchoCalculator.SingleInstance");
+    if(!singleInstance)return 1;
+    if(GetLastError()==ERROR_ALREADY_EXISTS){
+        if(HWND existing=FindWindowW(kWindowClass,nullptr)){ShowWindow(existing,SW_RESTORE);SetForegroundWindow(existing);}
+        CloseHandle(singleInstance);return 0;
+    }
+    if(FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED))){CloseHandle(singleInstance);return 1;}
     WNDCLASSEXW wc{sizeof(wc)};wc.hInstance=instance;wc.lpfnWndProc=WindowProc;wc.lpszClassName=kWindowClass;wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(101));wc.hIconSm=wc.hIcon;wc.hbrBackground=nullptr;
-    if(!RegisterClassExW(&wc)){CoUninitialize();return 1;}
+    if(!RegisterClassExW(&wc)){CoUninitialize();CloseHandle(singleInstance);return 1;}
     const auto size=WindowSizeForDpi(GetDpiForSystem());const int x=std::max(0,(GetSystemMetrics(SM_CXSCREEN)-size.cx)/2),y=std::max(0,(GetSystemMetrics(SM_CYSCREEN)-size.cy)/2);
-    HWND hwnd=CreateWindowExW(0,kWindowClass,kWindowTitle,kWindowStyle,x,y,size.cx,size.cy,nullptr,nullptr,instance,nullptr);if(!hwnd){CoUninitialize();return 1;}
+    HWND hwnd=CreateWindowExW(0,kWindowClass,kWindowTitle,kWindowStyle,x,y,size.cx,size.cy,nullptr,nullptr,instance,nullptr);if(!hwnd){CoUninitialize();CloseHandle(singleInstance);return 1;}
     ShowWindow(hwnd,showCommand==SW_SHOWMINIMIZED?SW_SHOWMINIMIZED:SW_SHOWNORMAL);UpdateWindow(hwnd);
     MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){
         if(g_app&&g_app->ExportModalOpen()&&msg.hwnd==g_app->EditHwnd()&&msg.message==WM_KEYDOWN){if(msg.wParam==VK_RETURN){g_app->ExportEnter();continue;}if(msg.wParam==VK_ESCAPE){g_app->ExportEscape();continue;}}
         TranslateMessage(&msg);DispatchMessageW(&msg);
     }
-    CoUninitialize();return static_cast<int>(msg.wParam);
+    CoUninitialize();CloseHandle(singleInstance);return static_cast<int>(msg.wParam);
 }

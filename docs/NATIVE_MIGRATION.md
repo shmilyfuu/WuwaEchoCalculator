@@ -1,6 +1,6 @@
 # Direct2D 原生迁移记录
 
-原生迁移已完成并进入 `main`，当前发布版本为 `v1.3.1`。历史迁移分支为 `feature/native-direct2d-migration`，旧 WebView2 主线保存在 `backup/main-webview2-v1.2.2-20260802`。
+原生迁移已完成并进入 `main`，当前发布版本为 `v1.3.2`。历史迁移分支为 `feature/native-direct2d-migration`，旧 WebView2 主线保存在 `backup/main-webview2-v1.2.2-20260802`。
 
 ## 当前实现
 
