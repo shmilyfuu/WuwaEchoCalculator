@@ -168,6 +168,7 @@ $appStates = @(
     @('export-invalid',         '12_export_dialog_title_too_long.png'),
     @('update-checking',        '13_update_checking_no_modal.png'),
     @('update-available',       '14_update_available.png'),
+    @('update-available-long',  '14b_update_available_long_scroll.png'),
     @('update-preparing',       '15_update_preparing.png'),
     @('update-downloading',     '16_update_downloading.png'),
     @('update-fallback',        '17_update_fallback_gitee_to_github.png'),

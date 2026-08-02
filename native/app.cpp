@@ -20,6 +20,7 @@
 #include <cwchar>
 #include <utility>
 #include <chrono>
+#include <cmath>
 #include "icon_assets.h"
 #include "ocr_engine.h"
 #include "ocr_parser.h"
@@ -171,8 +172,9 @@ public:
             updateState_.latest.version=updateManager_.PreparedVersion();
             updateState_.message=L"检测到已下载的更新包";
             modal_=ModalKind::UpdateReady;
+        }else{
+            updateManager_.Check(false);
         }
-        updateManager_.Check(false);
         return S_OK;
     }
 
@@ -298,6 +300,15 @@ public:
     }
 
     void MouseWheel(float x, float y, short delta) {
+        if(modal_==ModalKind::UpdateAvailable){
+            const auto viewport=UpdateNotesViewport();
+            const float maximum=UpdateNotesMaximumScroll();
+            if(maximum>0.0f&&Contains(viewport,x,y)){
+                updateNotesScroll_=std::clamp(updateNotesScroll_+(delta<0?36.0f:-36.0f),0.0f,maximum);
+                InvalidateRect(hwnd_,nullptr,FALSE);
+                return;
+            }
+        }
         if (dropdown_.kind == DropdownKind::None) return;
         const auto popup = DropdownPopupRect();
         if (!Contains(popup, x, y)) return;
@@ -359,6 +370,7 @@ public:
     void UpdateCompleted(NativeUpdateSnapshot* rawSnapshot){
         std::unique_ptr<NativeUpdateSnapshot> snapshot(rawSnapshot);
         if(!snapshot)return;
+        if(updateReady_&&snapshot->phase!=NativeUpdatePhase::Ready&&snapshot->phase!=NativeUpdatePhase::LaunchingInstaller){updateBusy_=false;return;}
         updateState_=*snapshot;
         const auto phase=snapshot->phase;
         updateBusy_=phase==NativeUpdatePhase::Checking||phase==NativeUpdatePhase::Preparing||
@@ -367,6 +379,7 @@ public:
         if(phase==NativeUpdatePhase::Checking){
             statusLevel_=StatusLevel::Attention;status_=L"正在检查更新";
         }else if(phase==NativeUpdatePhase::Available){
+            updateNotesScroll_=0.0f;
             statusLevel_=StatusLevel::Attention;status_=L"发现新版本 v"+snapshot->latest.version;
             modal_=ModalKind::UpdateAvailable;ShowWindow(edit_,SW_HIDE);
         }else if(phase==NativeUpdatePhase::UpToDate){
@@ -496,10 +509,17 @@ private:
             updateState_.phase = NativeUpdatePhase::Checking;
             statusLevel_ = StatusLevel::Attention;
             status_ = L"正在检查更新";
-        } else if (state == L"update-available") {
+        } else if (state == L"update-available" || state == L"update-available-long") {
+            std::wstring notes=L"- 优化更新流程界面\n- 修复已知问题\n- 提升本地识别稳定性";
+            if(state==L"update-available-long"){
+                notes=L"# 鸣潮声骸计算器 v1.3.3\n\n- 更新日志根据 Release 正文动态测量，不再使用固定高度。";
+                for(int line=1;line<=32;++line)notes+=L"\n- 滚动验证项目 "+std::to_wstring(line)+L"：长更新说明不会被静默裁切。";
+                notes+=L"\n- 完整说明最后一行应能通过滚动查看。";
+            }
             updateState_.phase = NativeUpdatePhase::Available;
             updateState_.latest = {true,L"1.3.3",L"v1.3.3",L"鸣潮声骸计算器 v1.3.3",
-                L"- 优化更新流程界面\n- 修复已知问题\n- 提升本地识别稳定性",L"Gitee"};
+                notes,L"Gitee"};
+            updateNotesScroll_=0.0f;
             modal_ = ModalKind::UpdateAvailable;
             statusLevel_ = StatusLevel::Attention;
             status_ = L"发现新版本 v1.3.3";
@@ -699,18 +719,50 @@ private:
     D2D1_RECT_F CenteredModalBox(float width,float height) const {
         return Rect((kClientWidth-width)/2.0f,(kClientHeight-height)/2.0f,width,height);
     }
-    D2D1_RECT_F UpdateModalBox() const {
-        if(modal_==ModalKind::UpdateAvailable)return CenteredModalBox(460,356);
-        if(modal_==ModalKind::UpdateProgress)return CenteredModalBox(460,343);
-        if(modal_==ModalKind::UpdateReady)return CenteredModalBox(460,321);
-        const bool failed=updateState_.phase==NativeUpdatePhase::Error;
-        return CenteredModalBox(460,failed?226.0f:186.0f);
+    float MeasureTextHeight(const std::wstring& text,IDWriteTextFormat* format,float width,float minimum=20.0f) const {
+        if(!dwriteFactory_||!format||text.empty())return minimum;
+        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        ComPtr<IDWriteTextLayout> layout;
+        if(FAILED(dwriteFactory_->CreateTextLayout(text.c_str(),static_cast<UINT32>(text.size()),format,width,4096.0f,layout.GetAddressOf())))return minimum;
+        DWRITE_TEXT_METRICS metrics{};
+        if(FAILED(layout->GetMetrics(&metrics)))return minimum;
+        return std::max(minimum,static_cast<float>(std::ceil(metrics.height)));
+    }
+    std::wstring UpdateNotes() const {
+        return updateState_.latest.notes.empty()?L"该版本未提供更新说明。":updateState_.latest.notes;
+    }
+    float UpdateNotesNaturalHeight() const {
+        const float fullWidthHeight=MeasureTextHeight(UpdateNotes(),updateBody_.Get(),412.0f);
+        return fullWidthHeight>496.0f?MeasureTextHeight(UpdateNotes(),updateBody_.Get(),400.0f):fullWidthHeight;
+    }
+    float UpdateNotesViewportHeight() const { return std::min(UpdateNotesNaturalHeight(),496.0f); }
+    float UpdateNotesMaximumScroll() const { return std::max(0.0f,UpdateNotesNaturalHeight()-UpdateNotesViewportHeight()); }
+    float UpdateModalWidth() const {
+        if(modal_==ModalKind::UpdateResult&&updateState_.phase!=NativeUpdatePhase::Error)return 384.0f;
+        return 460.0f;
     }
     float UpdateFrameOneHeight() const {
-        if(modal_==ModalKind::UpdateAvailable)return 278;
-        if(modal_==ModalKind::UpdateProgress)return 265;
-        if(modal_==ModalKind::UpdateReady)return 243;
-        return updateState_.phase==NativeUpdatePhase::Error?148.0f:108.0f;
+        if(modal_==ModalKind::UpdateAvailable)return 126.0f+UpdateNotesViewportHeight()+24.0f;
+        if(modal_==ModalKind::UpdateProgress)return 244.0f;
+        if(modal_==ModalKind::UpdateReady){
+            const std::wstring version=updateState_.latest.version.empty()?updateManager_.PreparedVersion():updateState_.latest.version;
+            const float first=MeasureTextHeight(L"新版本 v"+version+L" 已下载，可以立即安装。",body14_.Get(),412.0f);
+            const float second=MeasureTextHeight(L"立即更新会关闭计算器，替换程序文件并自动重新启动。声骸记录和设置文件会保留。",updateBody_.Get(),412.0f);
+            return 64.0f+first+12.0f+second+24.0f;
+        }
+        if(updateState_.phase==NativeUpdatePhase::Error){
+            const std::wstring message=updateState_.error.empty()?updateState_.message:updateState_.error;
+            return 64.0f+MeasureTextHeight(message,updateBody_.Get(),412.0f)+24.0f;
+        }
+        return 108.0f;
+    }
+    D2D1_RECT_F UpdateModalBox() const {
+        return CenteredModalBox(UpdateModalWidth(),UpdateFrameOneHeight()+78.0f);
+    }
+    D2D1_RECT_F UpdateNotesViewport() const {
+        const auto box=UpdateModalBox();
+        return Rect(box.left+24.0f,box.top+126.0f,412.0f,UpdateNotesViewportHeight());
     }
     D2D1_RECT_F UpdatePrimaryRect() const {
         const auto box=UpdateModalBox();
@@ -1059,45 +1111,61 @@ private:
         const auto box=UpdateModalBox();
         const float x=box.left+24;
         const float contentTop=box.top+64;
-        DrawDialogFrame(rt,b,box,UpdateFrameOneHeight());
+        const float frameHeight=UpdateFrameOneHeight();
+        const float contentWidth=box.right-box.left-48.0f;
+        DrawDialogFrame(rt,b,box,frameHeight);
         if(modal_==ModalKind::UpdateAvailable){
             Text(rt,b,L"发现新版本",Rect(x,box.top+24,412,28),title_.Get(),Hex(0xffffff));
             Text(rt,b,L"v"+std::wstring(kAppVersion)+L"  →  v"+updateState_.latest.version,Rect(x,contentTop,412,22),version_.Get(),Hex(0x4cc2ff));
-            Text(rt,b,L"下载来源："+(updateState_.latest.source.empty()?L"Gitee / GitHub":updateState_.latest.source),Rect(x,contentTop+30,412,20),body12_.Get(),Hex(0xffffff,.60f));
-            Text(rt,b,L"更新内容",Rect(x,contentTop+62,412,20),body12Bold_.Get(),Hex(0xffffff));
-            const std::wstring notes=updateState_.latest.notes.empty()?L"该版本未提供更新说明。":updateState_.latest.notes;
-            Text(rt,b,notes,Rect(x,contentTop+88,412,102),updateBody_.Get(),Hex(0xffffff,.70f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            Text(rt,b,L"更新内容",Rect(x,contentTop+34,412,20),body12Bold_.Get(),Hex(0xffffff));
+            const auto viewport=UpdateNotesViewport();
+            const float naturalHeight=UpdateNotesNaturalHeight();
+            const float maximum=std::max(0.0f,naturalHeight-(viewport.bottom-viewport.top));
+            updateNotesScroll_=std::clamp(updateNotesScroll_,0.0f,maximum);
+            rt->PushAxisAlignedClip(viewport,D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            Text(rt,b,UpdateNotes(),Rect(viewport.left,viewport.top-updateNotesScroll_,maximum>0.0f?400.0f:412.0f,naturalHeight),updateBody_.Get(),Hex(0xffffff,.70f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            rt->PopAxisAlignedClip();
+            if(maximum>0.0f){
+                const auto scrollTrack=Rect(viewport.right-4.0f,viewport.top,4.0f,viewport.bottom-viewport.top);
+                FillRound(rt,b,scrollTrack,2.0f,Hex(0xffffff,.08f));
+                const float thumbHeight=std::max(24.0f,(viewport.bottom-viewport.top)*(viewport.bottom-viewport.top)/naturalHeight);
+                const float thumbTop=viewport.top+(viewport.bottom-viewport.top-thumbHeight)*(updateNotesScroll_/maximum);
+                FillRound(rt,b,Rect(scrollTrack.left,thumbTop,4.0f,thumbHeight),2.0f,Hex(0xffffff,.35f));
+            }
             DrawButton(rt,b,ControlId::ModalAccept,UpdatePrimaryRect(),L"下载更新",ButtonKind::Blue,true);
             DrawButton(rt,b,ControlId::ModalCancel,UpdateSecondaryRect(),L"稍后",ButtonKind::Gray,true);
         }else if(modal_==ModalKind::UpdateProgress){
             Text(rt,b,L"正在下载更新",Rect(x,box.top+24,412,28),title_.Get(),Hex(0xffffff));
             const std::wstring version=updateState_.latest.version.empty()?L"":L"v"+std::wstring(kAppVersion)+L"  →  v"+updateState_.latest.version;
             Text(rt,b,version,Rect(x,contentTop,412,22),version_.Get(),Hex(0x4cc2ff));
-            Text(rt,b,updateState_.message.empty()?L"正在准备更新包":updateState_.message,Rect(x,contentTop+41,412,20),body14_.Get(),Hex(0xffffff));
-            const auto track=Rect(x,contentTop+79,412,8);FillRound(rt,b,track,4,Hex(0xffffff,.08f));
+            Text(rt,b,updateState_.message.empty()?L"正在准备更新包":updateState_.message,Rect(x,contentTop+34,412,20),body14_.Get(),Hex(0xffffff));
+            const auto track=Rect(x,contentTop+66,412,30);FillRound(rt,b,track,3,Hex(0xffffff,.08f));
             float progress=0.0f;
             if(updateState_.totalBytes>0)progress=std::clamp(static_cast<float>(updateState_.downloadedBytes)/static_cast<float>(updateState_.totalBytes),0.0f,1.0f);
             else if(updateState_.phase==NativeUpdatePhase::Verifying)progress=1.0f;
-            if(progress>0)FillRound(rt,b,Rect(x,contentTop+79,412*progress,8),4,Hex(0x4cc2ff));
+            if(progress>0)FillRound(rt,b,Rect(x,contentTop+66,412*progress,30),3,Hex(0x4cc2ff));
             const int percent=updateState_.totalBytes>0?static_cast<int>(progress*100.0f):(updateState_.phase==NativeUpdatePhase::Verifying?100:0);
-            Text(rt,b,std::to_wstring(percent)+L"%",Rect(x,contentTop+97,412,20),body12Bold_.Get(),Hex(0xffffff),DWRITE_TEXT_ALIGNMENT_TRAILING);
+            Text(rt,b,std::to_wstring(percent)+L"%",Rect(x,contentTop+108,412,20),body12Bold_.Get(),Hex(0xffffff),DWRITE_TEXT_ALIGNMENT_TRAILING);
             const std::wstring transferred=FormatTransferSize(updateState_.downloadedBytes)+L" / "+(updateState_.totalBytes?FormatTransferSize(updateState_.totalBytes):L"未知大小");
-            Text(rt,b,transferred,Rect(x,contentTop+125,250,20),body12_.Get(),Hex(0xffffff,.60f));
-            Text(rt,b,updateState_.bytesPerSecond?FormatTransferSize(updateState_.bytesPerSecond)+L"/s":L"",Rect(x+262,contentTop+125,150,20),body12_.Get(),Hex(0xffffff,.60f),DWRITE_TEXT_ALIGNMENT_TRAILING);
-            Text(rt,b,L"来源："+(updateState_.latest.source.empty()?L"Gitee / GitHub":updateState_.latest.source),Rect(x,contentTop+157,412,20),body12_.Get(),Hex(0xffffff,.60f));
+            Text(rt,b,transferred,Rect(x,contentTop+136,250,20),body12_.Get(),Hex(0xffffff,.60f));
+            Text(rt,b,updateState_.bytesPerSecond?FormatTransferSize(updateState_.bytesPerSecond)+L"/s":L"",Rect(x+262,contentTop+136,150,20),body12_.Get(),Hex(0xffffff,.60f),DWRITE_TEXT_ALIGNMENT_TRAILING);
             DrawButton(rt,b,ControlId::ModalCancel,UpdateSecondaryRect(),L"取消下载",ButtonKind::Gray,updateState_.phase==NativeUpdatePhase::Downloading||updateState_.phase==NativeUpdatePhase::Preparing);
         }else if(modal_==ModalKind::UpdateReady){
             Text(rt,b,L"更新已准备完成",Rect(x,box.top+24,412,28),title_.Get(),Hex(0xffffff));
             const std::wstring version=updateState_.latest.version.empty()?updateManager_.PreparedVersion():updateState_.latest.version;
-            Text(rt,b,L"新版本 v"+version+L" 已下载，可以立即安装。",Rect(x,contentTop,412,24),body14_.Get(),Hex(0xffffff));
-            Text(rt,b,L"立即更新会关闭计算器，替换程序文件并自动重新启动。声骸记录和设置文件会保留。",Rect(x,contentTop+44,412,70),updateBody_.Get(),Hex(0xffffff,.70f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-            Text(rt,b,L"选择稍后后，顶部按钮会变为蓝色“更新”。",Rect(x,contentTop+135,412,20),body12_.Get(),Hex(0xffffff,.60f));
+            const std::wstring first=L"新版本 v"+version+L" 已下载，可以立即安装。";
+            const std::wstring second=L"立即更新会关闭计算器，替换程序文件并自动重新启动。声骸记录和设置文件会保留。";
+            const float firstHeight=MeasureTextHeight(first,body14_.Get(),412.0f);
+            const float secondHeight=MeasureTextHeight(second,updateBody_.Get(),412.0f);
+            Text(rt,b,first,Rect(x,contentTop,412,firstHeight),body14_.Get(),Hex(0xffffff),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            Text(rt,b,second,Rect(x,contentTop+firstHeight+12.0f,412,secondHeight),updateBody_.Get(),Hex(0xffffff,.70f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
             DrawButton(rt,b,ControlId::ModalAccept,UpdatePrimaryRect(),L"立即更新",ButtonKind::Blue,true);
             DrawButton(rt,b,ControlId::ModalCancel,UpdateSecondaryRect(),L"稍后",ButtonKind::Gray,true);
         }else{
             const bool failed=updateState_.phase==NativeUpdatePhase::Error;
-            Text(rt,b,failed?L"更新操作失败":L"检查更新",Rect(x,box.top+24,412,28),title_.Get(),Hex(0xffffff));
-            Text(rt,b,failed?(updateState_.error.empty()?updateState_.message:updateState_.error):L"当前已是最新版本 v"+std::wstring(kAppVersion),Rect(x,contentTop,412,failed?60.0f:20.0f),updateBody_.Get(),failed?Hex(0xff99a4):Hex(0xffffff,.75f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            const std::wstring message=failed?(updateState_.error.empty()?updateState_.message:updateState_.error):L"当前已是最新版本 v"+std::wstring(kAppVersion);
+            Text(rt,b,failed?L"更新操作失败":L"检查更新",Rect(x,box.top+24,contentWidth,28),title_.Get(),Hex(0xffffff));
+            Text(rt,b,message,Rect(x,contentTop,contentWidth,frameHeight-88.0f),updateBody_.Get(),failed?Hex(0xff99a4):Hex(0xffffff,.75f),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
             DrawButton(rt,b,ControlId::ModalAccept,UpdatePrimaryRect(),L"确定",ButtonKind::Blue,true);
         }
     }
@@ -1445,6 +1513,7 @@ private:
     int pendingSlot_ = -1;
     NativeUpdateManager updateManager_;
     NativeUpdateSnapshot updateState_{};
+    float updateNotesScroll_ = 0.0f;
     NativeOcrEngine ocr_;
     std::thread ocrThread_;
     std::atomic_bool ocrCancel_{false};

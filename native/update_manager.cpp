@@ -398,14 +398,15 @@ bool CheckLatest(const std::wstring& currentVersion, NativeUpdateInfo& output, s
     NativeUpdateInfo gitee, github;
     std::wstring giteeError, githubError;
     const bool giteeOk = FetchRelease(L"Gitee", kGiteeLatestUrl, kGiteePageBase, true, currentVersion, gitee, giteeError);
-    if (giteeOk && gitee.available) { output = gitee; return true; }
     const bool githubOk = FetchRelease(L"GitHub", kGithubLatestUrl, kGithubPageBase, false, currentVersion, github, githubError);
-    if (githubOk) {
-        if (!giteeOk || NativeUpdateManager::CompareVersions(gitee.version, github.version) < 0) output = github;
-        else output = gitee;
+    if (giteeOk && githubOk) {
+        const int comparison = NativeUpdateManager::CompareVersions(gitee.version, github.version);
+        output = comparison >= 0 ? gitee : github;
+        if (comparison == 0 && output.notes.empty()) output.notes = github.notes;
         return true;
     }
     if (giteeOk) { output = gitee; return true; }
+    if (githubOk) { output = github; return true; }
     error = giteeError + L"；" + githubError;
     return false;
 }
@@ -527,7 +528,8 @@ struct NativeUpdateManager::Impl {
     }
 
     bool DownloadFile(const NativeUpdateInfo& info, const std::filesystem::path& target,
-                      std::wstring expectedSha, std::wstring& error) {
+                      std::wstring expectedSha, std::wstring& error,
+                      const std::wstring& progressMessage = L"正在下载更新包") {
         InternetHandle session, connection, request;
         if (!OpenRequest(info.downloadUrl, session, connection, request, error)) return false;
         DWORD contentLength = 0, size = sizeof(contentLength);
@@ -571,7 +573,7 @@ struct NativeUpdateManager::Impl {
                 const double seconds = std::chrono::duration<double>(now - lastReport).count();
                 const auto speed = seconds > 0 ? static_cast<std::uint64_t>((downloaded - lastBytes) / seconds) : 0;
                 NativeUpdateSnapshot snapshot; snapshot.phase = NativeUpdatePhase::Downloading; snapshot.latest = info;
-                snapshot.message = L"正在下载更新包"; snapshot.downloadedBytes = downloaded; snapshot.totalBytes = contentLength; snapshot.bytesPerSecond = speed;
+                snapshot.message = progressMessage; snapshot.downloadedBytes = downloaded; snapshot.totalBytes = contentLength; snapshot.bytesPerSecond = speed;
                 Notify(std::move(snapshot));
                 lastReport = now; lastBytes = downloaded;
             }
@@ -683,7 +685,7 @@ void NativeUpdateManager::DownloadLatest() {
                     selectedInfo = fallback;
                     expectedSha = fallbackSha;
                     error.clear();
-                    downloaded = impl_->DownloadFile(selectedInfo, package, expectedSha, error);
+                    downloaded = impl_->DownloadFile(selectedInfo, package, expectedSha, error,L"Gitee 下载失败，已切换到 GitHub，正在下载更新包");
                 }
             }
             if (!downloaded && !fallbackError.empty()) {

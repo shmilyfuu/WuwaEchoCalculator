@@ -23,6 +23,9 @@ namespace {
 constexpr wchar_t kClassName[] = L"WuwaEchoUpdaterWindow";
 constexpr wchar_t kFailureClassName[] = L"WuwaEchoUpdaterFailureWindow";
 constexpr wchar_t kCalculatorClassName[] = L"WuwaEchoCalculatorNativeWindow";
+constexpr DWORD kWindowStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+constexpr int kClientWidth = 504;
+constexpr int kClientHeight = 201;
 constexpr UINT kProgressMessage = WM_APP + 1;
 constexpr UINT kCompleteMessage = WM_APP + 2;
 constexpr UINT kFailureMessage = WM_APP + 3;
@@ -329,6 +332,12 @@ void FillRounded(HDC dc, const RECT& rect, int radius, COLORREF color) {
     SelectObject(dc, oldPen); SelectObject(dc, oldBrush); DeleteObject(brush);
 }
 
+SIZE WindowSizeForClient(UINT dpi) {
+    RECT rect{0,0,kClientWidth,kClientHeight};
+    AdjustWindowRectExForDpi(&rect,kWindowStyle,FALSE,0,dpi);
+    return SIZE{rect.right-rect.left,rect.bottom-rect.top};
+}
+
 BOOL CALLBACK CloseCalculatorWindow(HWND hwnd, LPARAM) {
     wchar_t className[128]{};
     if (GetClassNameW(hwnd, className, static_cast<int>(_countof(className))) &&
@@ -421,13 +430,13 @@ void PaintWindow(HWND hwnd) {
     DrawTextLine(dc,g_titleFont,RGB(255,255,255),L"鸣潮声骸计算器更新",title,DT_LEFT|DT_SINGLELINE|DT_VCENTER);
     RECT phase{24,64,client.right-90,84};
     DrawTextLine(dc,g_bodyFont,state.failed?RGB(255,153,164):RGB(255,255,255),state.phase,phase,DT_LEFT|DT_SINGLELINE|DT_VCENTER);
-    RECT track{24,96,client.right-24,106};
+    RECT track{24,96,client.right-24,126};
     FillRounded(dc,track,3,RGB(55,55,55));
     RECT fill=track;fill.right=fill.left+(fill.right-fill.left)*state.percent/100;
     if(fill.right>fill.left)FillRounded(dc,fill,3,state.failed?RGB(196,43,28):RGB(76,194,255));
     RECT percent{client.right-90,64,client.right-24,84};
     DrawTextLine(dc,g_bodyFont,RGB(150,150,150),std::to_wstring(state.percent)+L"%",percent,DT_RIGHT|DT_SINGLELINE|DT_VCENTER);
-    RECT detail{24,118,client.right-24,client.bottom-24};
+    RECT detail{24,138,client.right-24,client.bottom-24};
     DrawTextLine(dc,g_smallFont,RGB(150,150,150),state.detail,detail,DT_LEFT|DT_WORDBREAK|DT_END_ELLIPSIS);
     EndPaint(hwnd,&paint);
 }
@@ -482,9 +491,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int showCommand) {
     failureClass.lpszClassName=kFailureClassName;failureClass.hCursor=LoadCursorW(nullptr,IDC_ARROW);failureClass.hbrBackground=nullptr;
     failureClass.hIcon=windowClass.hIcon;failureClass.hIconSm=windowClass.hIconSm;
     if(!RegisterClassExW(&failureClass))return 1;
-    const int width=520,height=240,x=(GetSystemMetrics(SM_CXSCREEN)-width)/2,y=(GetSystemMetrics(SM_CYSCREEN)-height)/2;
-    g_window=CreateWindowExW(0,kClassName,L"鸣潮声骸计算器更新",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,
-        x,y,width,height,nullptr,nullptr,instance,nullptr);
+    const SIZE windowSize=WindowSizeForClient(GetDpiForSystem());
+    const int x=(GetSystemMetrics(SM_CXSCREEN)-windowSize.cx)/2,y=(GetSystemMetrics(SM_CYSCREEN)-windowSize.cy)/2;
+    g_window=CreateWindowExW(0,kClassName,L"鸣潮声骸计算器更新",kWindowStyle,
+        x,y,windowSize.cx,windowSize.cy,nullptr,nullptr,instance,nullptr);
     if(!g_window)return 1;
     BOOL dark=TRUE;DwmSetWindowAttribute(g_window,20,&dark,sizeof(dark));
     g_titleFont=CreateFontW(-22,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
