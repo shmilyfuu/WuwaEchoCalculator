@@ -146,6 +146,9 @@ public:
         CreateTextFormats();
         CreateEditControl();
         DragAcceptFiles(hwnd_, TRUE);
+#ifdef WUWA_UI_PREVIEW
+        if (InitializeUiPreview()) return S_OK;
+#endif
         wchar_t modulePath[MAX_PATH]{};
         GetModuleFileNameW(nullptr,modulePath,MAX_PATH);
         std::wstring ocrError;
@@ -387,6 +390,176 @@ public:
     }
 
 private:
+#ifdef WUWA_UI_PREVIEW
+    static std::wstring PreviewArgument(const wchar_t* name) {
+        int count = 0;
+        LPWSTR* values = CommandLineToArgvW(GetCommandLineW(), &count);
+        if (!values) return {};
+        std::wstring result;
+        for (int index = 1; index + 1 < count; ++index) {
+            if (_wcsicmp(values[index], name) == 0) {
+                result = values[index + 1];
+                break;
+            }
+        }
+        LocalFree(values);
+        return result;
+    }
+
+    void LoadPreviewImage(const std::wstring& path) {
+        if (path.empty()) return;
+        ComPtr<IWICBitmapDecoder> decoder;
+        if (FAILED(wicFactory_->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+                WICDecodeMetadataCacheOnLoad, decoder.GetAddressOf()))) return;
+        ComPtr<IWICBitmapFrameDecode> frame;
+        if (FAILED(decoder->GetFrame(0, frame.GetAddressOf()))) return;
+        ComPtr<IWICFormatConverter> converter;
+        if (FAILED(wicFactory_->CreateFormatConverter(converter.GetAddressOf()))) return;
+        if (FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+                WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom))) return;
+        if (FAILED(wicFactory_->CreateBitmapFromSource(converter.Get(), WICBitmapCacheOnLoad,
+                imageWic_.GetAddressOf()))) return;
+        imageWic_->GetSize(&imageW_, &imageH_);
+        imageName_ = std::filesystem::path(path).filename().wstring();
+    }
+
+    void SetPreviewRows() {
+        rows_ = {{{8,2},{7,1},{11,1},{5,4},{4,2}}};
+        rowConfidence_ = {{1,1,2,3,1}};
+    }
+
+    void SetPreviewSlots() {
+        const std::array<std::array<RowSelection,5>,5> samples{{
+            {{{12,5},{7,2},{1,5},{5,4},{4,2}}},
+            {{{8,2},{7,1},{11,1},{5,4},{4,2}}},
+            {{{9,3},{10,7},{1,0},{5,0},{8,6}}},
+            {{{1,6},{12,5},{4,3},{10,7},{3,1}}},
+            {{{9,3},{10,7},{1,0},{5,0},{8,6}}}
+        }};
+        for (int index = 0; index < 5; ++index) {
+            slots_[index].used = true;
+            slots_[index].rows = samples[index];
+            slots_[index].subtotal = 0;
+            for (const auto& row : slots_[index].rows) slots_[index].subtotal += ScoreOf(row);
+        }
+    }
+
+    bool InitializeUiPreview() {
+        const std::wstring state = PreviewArgument(L"--ui-preview");
+        if (state.empty()) return false;
+
+        statusError_ = false;
+        status_ = L"PP-OCRv5 本地模型已就绪";
+        if (state == L"main-empty") return true;
+
+        SetPreviewRows();
+        SetPreviewSlots();
+        LoadPreviewImage(PreviewArgument(L"--preview-image"));
+
+        if (state == L"main-recognized") {
+            status_ = L"已识别五条，其中 1 条建议重点核对";
+        } else if (state == L"ocr-recognizing") {
+            rows_ = {};
+            rowConfidence_.fill(0);
+            ocrRunning_ = true;
+            status_ = L"正在识别声骸属性";
+        } else if (state == L"ocr-error") {
+            rows_ = {};
+            rowConfidence_.fill(0);
+            statusError_ = true;
+            status_ = L"未识别到有效属性，请调整截图或手动选择";
+        } else if (state == L"dropdown-attribute") {
+            dropdown_ = {DropdownKind::Attribute, 0, 0, Rect(416,160,168,30)};
+        } else if (state == L"dropdown-value") {
+            dropdown_ = {DropdownKind::Value, 0, 0, Rect(592,160,96,30)};
+        } else if (state == L"dropdown-slot") {
+            dropdown_ = {DropdownKind::Slot, -1, 0, Rect(534,410,168,30)};
+        } else if (state == L"confirm-clear") {
+            OpenConfirm(ConfirmAction::ClearAll,L"清空记录",L"确认清空5个声骸的全部记录？",L"清空",true);
+        } else if (state == L"confirm-delete") {
+            pendingSlot_ = 2;
+            OpenConfirm(ConfirmAction::DeleteSlot,L"删除记录",L"确认删除声骸 3 的记录？",L"删除",true);
+        } else if (state == L"confirm-overwrite") {
+            pendingSlot_ = 0;
+            OpenConfirm(ConfirmAction::OverwriteSlot,L"覆盖记录",L"声骸 1 已有记录，确认覆盖？",L"覆盖",false);
+        } else if (state == L"export-normal" || state == L"export-invalid") {
+            OpenExport();
+            if (state == L"export-invalid") {
+                SetWindowTextW(edit_,L"这是一个超过十二个中文字符的导出标题");
+                exportTitleInvalid_ = true;
+            }
+        } else if (state == L"update-checking") {
+            updateBusy_ = true;
+            updateState_.phase = NativeUpdatePhase::Checking;
+            status_ = L"正在检查更新";
+        } else if (state == L"update-available") {
+            updateState_.phase = NativeUpdatePhase::Available;
+            updateState_.latest = {true,L"1.3.2",L"v1.3.2",L"鸣潮声骸计算器 v1.3.2",
+                L"- 优化更新流程界面\n- 修复已知问题\n- 提升本地识别稳定性",L"Gitee"};
+            modal_ = ModalKind::UpdateAvailable;
+            status_ = L"发现新版本 v1.3.2";
+        } else if (state == L"update-preparing") {
+            updateBusy_ = true;
+            updateState_.phase = NativeUpdatePhase::Preparing;
+            updateState_.latest.version = L"1.3.2";
+            updateState_.latest.source = L"Gitee";
+            updateState_.message = L"正在准备更新包";
+            modal_ = ModalKind::UpdateProgress;
+        } else if (state == L"update-downloading") {
+            updateBusy_ = true;
+            updateState_.phase = NativeUpdatePhase::Downloading;
+            updateState_.latest.version = L"1.3.2";
+            updateState_.latest.source = L"Gitee";
+            updateState_.message = L"正在下载更新包";
+            updateState_.downloadedBytes = 48234496;
+            updateState_.totalBytes = 86507520;
+            updateState_.bytesPerSecond = 3670016;
+            modal_ = ModalKind::UpdateProgress;
+        } else if (state == L"update-verifying") {
+            updateBusy_ = true;
+            updateState_.phase = NativeUpdatePhase::Verifying;
+            updateState_.latest.version = L"1.3.2";
+            updateState_.latest.source = L"Gitee";
+            updateState_.message = L"正在校验更新包";
+            updateState_.downloadedBytes = 86507520;
+            updateState_.totalBytes = 86507520;
+            modal_ = ModalKind::UpdateProgress;
+        } else if (state == L"update-fallback") {
+            updateBusy_ = true;
+            updateState_.phase = NativeUpdatePhase::Preparing;
+            updateState_.latest.version = L"1.3.2";
+            updateState_.latest.source = L"GitHub";
+            updateState_.message = L"Gitee 下载失败，正在切换到 GitHub";
+            modal_ = ModalKind::UpdateProgress;
+        } else if (state == L"update-ready") {
+            updateReady_ = true;
+            updateState_.phase = NativeUpdatePhase::Ready;
+            updateState_.latest.version = L"1.3.2";
+            modal_ = ModalKind::UpdateReady;
+            status_ = L"更新包已准备完成";
+        } else if (state == L"update-ready-deferred") {
+            updateReady_ = true;
+            updateState_.phase = NativeUpdatePhase::Ready;
+            updateState_.latest.version = L"1.3.2";
+            status_ = L"更新包已保留，可稍后安装";
+        } else if (state == L"update-latest") {
+            updateState_.phase = NativeUpdatePhase::UpToDate;
+            modal_ = ModalKind::UpdateResult;
+            status_ = L"当前已是最新版本";
+        } else if (state == L"update-error") {
+            updateState_.phase = NativeUpdatePhase::Error;
+            updateState_.error = L"Gitee：连接更新服务器失败；GitHub：请求更新信息超时";
+            modal_ = ModalKind::UpdateResult;
+            statusError_ = true;
+            status_ = updateState_.error;
+        } else if (state == L"update-cancelled") {
+            updateState_.phase = NativeUpdatePhase::Cancelled;
+            status_ = L"已取消下载更新";
+        }
+        return true;
+    }
+#endif
+
     static std::wstring CompactOcrText(std::wstring value) {
         std::wstring output;
         for(wchar_t ch:value){

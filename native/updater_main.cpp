@@ -47,6 +47,36 @@ HFONT g_titleFont = nullptr;
 HFONT g_bodyFont = nullptr;
 HFONT g_smallFont = nullptr;
 
+#ifdef WUWA_UI_PREVIEW
+std::wstring PreviewArgument() {
+    int count = 0;
+    LPWSTR* values = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (!values) return {};
+    std::wstring result;
+    for (int index = 1; index + 1 < count; ++index) {
+        if (_wcsicmp(values[index], L"--ui-preview") == 0) {
+            result = values[index + 1];
+            break;
+        }
+    }
+    LocalFree(values);
+    return result;
+}
+
+void ApplyPreviewState(const std::wstring& state) {
+    if (state == L"updater-waiting") g_state = {4,L"正在等待计算器退出",L"",false,false};
+    else if (state == L"updater-preparing") g_state = {10,L"正在准备更新文件",L"WuwaEchoCalculator-v1.3.2-windows-x64.zip",false,false};
+    else if (state == L"updater-checking") g_state = {22,L"正在检查更新文件",L"",false,false};
+    else if (state == L"updater-backup") g_state = {26,L"正在备份当前版本",L"",false,false};
+    else if (state == L"updater-replacing") g_state = {64,L"正在替换程序文件",L"models\\rec.onnx",false,false};
+    else if (state == L"updater-cleaning") g_state = {93,L"正在清理临时文件",L"",false,false};
+    else if (state == L"updater-restarting") g_state = {98,L"正在重新启动",L"",false,false};
+    else if (state == L"updater-complete") g_state = {100,L"更新完成",L"新版本已启动",false,true};
+    else if (state == L"updater-error" || state == L"updater-error-dialog")
+        g_state = {64,L"更新失败",L"替换程序文件失败：鸣潮声骸计算器.exe",true,false};
+}
+#endif
+
 std::wstring Quote(const std::wstring& value) {
     if (value.find_first_of(L" \t\"") == std::wstring::npos) return value;
     std::wstring output = L"\"";
@@ -323,8 +353,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int showCommand) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+#ifdef WUWA_UI_PREVIEW
+    const std::wstring previewState = PreviewArgument();
+    const bool preview = !previewState.empty();
+    Arguments arguments; std::wstring error;
+    if (preview) ApplyPreviewState(previewState);
+    else if(!ParseArguments(arguments,error)){MessageBoxW(nullptr,error.c_str(),L"鸣潮声骸计算器更新失败",MB_OK|MB_ICONERROR);return 1;}
+#else
     Arguments arguments; std::wstring error;
     if(!ParseArguments(arguments,error)){MessageBoxW(nullptr,error.c_str(),L"鸣潮声骸计算器更新失败",MB_OK|MB_ICONERROR);return 1;}
+#endif
     WNDCLASSEXW windowClass{sizeof(windowClass)};windowClass.hInstance=instance;windowClass.lpfnWndProc=WindowProc;
     windowClass.lpszClassName=kClassName;windowClass.hCursor=LoadCursorW(nullptr,IDC_ARROW);windowClass.hbrBackground=nullptr;
     windowClass.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(101));windowClass.hIconSm=windowClass.hIcon;
@@ -338,6 +376,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int showCommand) {
     g_bodyFont=CreateFontW(-16,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
     g_smallFont=CreateFontW(-14,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
     ShowWindow(g_window,showCommand==SW_HIDE?SW_SHOWNORMAL:showCommand);UpdateWindow(g_window);
+#ifdef WUWA_UI_PREVIEW
+    if (previewState == L"updater-error-dialog")
+        MessageBoxW(g_window,g_state.detail.c_str(),L"鸣潮声骸计算器更新失败",MB_OK|MB_ICONERROR);
+    if (!preview) { std::thread worker(Worker,arguments);worker.detach(); }
+#else
     std::thread worker(Worker,arguments);worker.detach();
+#endif
     MSG message{};while(GetMessageW(&message,nullptr,0,0)>0){TranslateMessage(&message);DispatchMessageW(&message);}return 0;
 }
