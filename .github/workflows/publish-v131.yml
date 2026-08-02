@@ -1,0 +1,166 @@
+name: Publish v1.3.1
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release version
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($version -ne '1.3.1') { throw "Expected VERSION 1.3.1, got $version" }
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate native sources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -m pip install --disable-pip-version-check pillow pyyaml
+          python scripts/generate_icon.py
+          python scripts/patch_native_ui.py
+          python scripts/patch_native_ocr.py
+          python scripts/patch_ocr_engine.py
+          python scripts/patch_ocr_engine_main_parity.py
+          python scripts/patch_native_runtime_fixes.py
+          python scripts/patch_native_export_figma.py
+          python scripts/normalize_native_release_for_v130.py
+          python scripts/patch_native_v130_ui.py
+          python scripts/patch_native_v130_ocr.py
+          python scripts/patch_native_v130_update.py
+          python scripts/patch_native_v131_fixes.py
+          python scripts/patch_update_manager.py
+          python scripts/patch_update_manager_v131.py
+          python scripts/patch_updater_main.py
+          python scripts/generate_ocr_smoke_image.py
+
+      - name: Install ONNX Runtime
+        shell: pwsh
+        run: nuget install Microsoft.ML.OnnxRuntime -OutputDirectory packages -ExcludeVersion -NonInteractive
+
+      - name: Download OCR models
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $models = Join-Path $PWD 'build-models'
+          New-Item -ItemType Directory -Force $models | Out-Null
+          curl.exe -L --fail --retry 4 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/main/inference.onnx?download=true' -o "$models\det.onnx"
+          curl.exe -L --fail --retry 4 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx?download=true' -o "$models\rec.onnx"
+          curl.exe -L --fail --retry 4 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml?download=true' -o "$models\rec.yml"
+          python scripts/extract_ocr_dict.py "$models\rec.yml" "$models\dict.txt"
+
+      - name: Compile and test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
+          $native = Resolve-Path native
+          $out = Join-Path $PWD build-native
+          $ort = Resolve-Path packages\Microsoft.ML.OnnxRuntime
+          $ortInclude = Join-Path $ort 'build\native\include'
+          $ortNative = Join-Path $ort 'runtimes\win-x64\native'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $batch = @"
+          @echo off
+          call "$vcvars"
+          if errorlevel 1 exit /b 1
+          cd /d "$native"
+          rc.exe /nologo /fo "$out\app.res" app.rc
+          if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" build_entry.cpp ocr_build_entry.cpp ocr_parser.cpp update_manager_fixed.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculator.exe" /LIBPATH:"$ortNative" onnxruntime.lib d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib winhttp.lib bcrypt.lib
+          if errorlevel 1 exit /b 1
+          mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoCalculator.exe";#1
+          if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc updater_main_fixed.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoUpdater.exe" shell32.lib dwmapi.lib user32.lib gdi32.lib
+          if errorlevel 1 exit /b 1
+          mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoUpdater.exe";#1
+          if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc ocr_parser_smoke_test.cpp ocr_parser.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\ocr_parser_smoke_test.exe"
+          if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc update_manager_smoke_test.cpp update_manager_fixed.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\update_manager_smoke_test.exe" winhttp.lib bcrypt.lib
+          if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" ocr_smoke_test.cpp ocr_build_entry.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\ocr_smoke_test.exe" /LIBPATH:"$ortNative" onnxruntime.lib windowscodecs.lib ole32.lib user32.lib gdi32.lib uuid.lib
+          if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc png_export_smoke_test.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\png_export_smoke_test.exe" d2d1.lib windowscodecs.lib ole32.lib user32.lib gdi32.lib uuid.lib
+          if errorlevel 1 exit /b 1
+          "@
+          Set-Content build-native.cmd $batch -Encoding ASCII
+          cmd.exe /d /c build-native.cmd
+          if ($LASTEXITCODE -ne 0) { throw "compile failed: $LASTEXITCODE" }
+          Copy-Item "$ortNative\*.dll" $out -Force
+          & build-native\ocr_parser_smoke_test.exe
+          if ($LASTEXITCODE) { throw 'OCR parser regression failed' }
+          & build-native\update_manager_smoke_test.exe
+          if ($LASTEXITCODE) { throw 'Updater regression failed' }
+          & build-native\ocr_smoke_test.exe (Resolve-Path build-models) (Resolve-Path build-tests\ocr_smoke.png)
+          if ($LASTEXITCODE) { throw 'OCR inference regression failed' }
+          & build-native\png_export_smoke_test.exe (Join-Path $PWD build-tests\export.png)
+          if ($LASTEXITCODE) { throw 'PNG regression failed' }
+
+      - name: Assemble release assets
+        shell: pwsh
+        run: |
+          $folder = 'dist\鸣潮声骸计算器_v1.3.1'
+          New-Item -ItemType Directory -Force "$folder\models", "$folder\data", "$folder\updates" | Out-Null
+          Copy-Item build-native\WuwaEchoCalculator.exe "$folder\鸣潮声骸计算器.exe"
+          Copy-Item build-native\WuwaEchoUpdater.exe "$folder\WuwaEchoUpdater.exe"
+          Copy-Item build-native\onnxruntime*.dll $folder
+          Copy-Item build-models\det.onnx,build-models\rec.onnx,build-models\dict.txt "$folder\models"
+          Copy-Item RELEASE_NOTES.md "$folder\版本说明.md"
+          Compress-Archive -Path $folder -DestinationPath WuwaEchoCalculator-v1.3.1-windows-x64.zip -CompressionLevel Optimal
+          $hash = (Get-FileHash WuwaEchoCalculator-v1.3.1-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  WuwaEchoCalculator-v1.3.1-windows-x64.zip" | Set-Content WuwaEchoCalculator-v1.3.1-windows-x64.zip.sha256 -Encoding ASCII
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="v1.3.1"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" WuwaEchoCalculator-v1.3.1-windows-x64.zip WuwaEchoCalculator-v1.3.1-windows-x64.zip.sha256 --clobber
+            gh release edit "$TAG" --notes-file RELEASE_NOTES.md
+          else
+            gh release create "$TAG" WuwaEchoCalculator-v1.3.1-windows-x64.zip WuwaEchoCalculator-v1.3.1-windows-x64.zip.sha256 --target main --title "鸣潮声骸计算器 v1.3.1" --notes-file RELEASE_NOTES.md
+          fi
+
+      - name: Mirror main and tag to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        shell: bash
+        run: |
+          : "${GITEE_TOKEN:?GITEE_TOKEN is required for Gitee sync}"
+          git remote remove gitee 2>/dev/null || true
+          git remote add gitee "https://oauth2:${GITEE_TOKEN}@gitee.com/shmilyfuu/WuwaEchoCalculator.git"
+          git push gitee main --force
+          git push gitee v1.3.1 --force
+
+      - name: Create Gitee Release
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        shell: bash
+        run: |
+          chmod +x .github/scripts/publish-gitee-release.sh
+          VERSION=1.3.1 .github/scripts/publish-gitee-release.sh
