@@ -12,12 +12,15 @@ jobs:
   validate:
     runs-on: windows-latest
     timeout-minutes: 45
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Generate native sources
+
+      - name: Generate v1.3.1 native sources
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -34,12 +37,16 @@ jobs:
           python scripts/patch_native_v130_ui.py
           python scripts/patch_native_v130_ocr.py
           python scripts/patch_native_v130_update.py
+          python scripts/patch_native_v131_fixes.py
           python scripts/patch_update_manager.py
+          python scripts/patch_update_manager_v131.py
           python scripts/patch_updater_main.py
           python scripts/generate_ocr_smoke_image.py
+
       - name: Install ONNX Runtime
         shell: pwsh
         run: nuget install Microsoft.ML.OnnxRuntime -OutputDirectory packages -ExcludeVersion -NonInteractive
+
       - name: Download OCR models
         shell: pwsh
         run: |
@@ -51,12 +58,14 @@ jobs:
           curl.exe -L --fail --retry 4 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx?download=true' -o "$models\rec.onnx"
           curl.exe -L --fail --retry 4 'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml?download=true' -o "$models\rec.yml"
           python scripts/extract_ocr_dict.py "$models\rec.yml" "$models\dict.txt"
-      - name: Compile
+
+      - name: Compile application, updater and regression tests
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'Visual Studio C++ tools not found' }
           $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
           $native = Resolve-Path native
           $out = Join-Path $PWD build-native
@@ -71,9 +80,13 @@ jobs:
           cd /d "$native"
           rc.exe /nologo /fo "$out\app.res" app.rc
           if errorlevel 1 exit /b 1
-          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" build_entry.cpp ocr_build_entry.cpp ocr_parser.cpp update_manager_fixed.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculatorNative.exe" /LIBPATH:"$ortNative" onnxruntime.lib d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib winhttp.lib bcrypt.lib
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /I"$ortInclude" build_entry.cpp ocr_build_entry.cpp ocr_parser.cpp update_manager_fixed.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoCalculator.exe" /LIBPATH:"$ortNative" onnxruntime.lib d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib winhttp.lib bcrypt.lib
+          if errorlevel 1 exit /b 1
+          mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoCalculator.exe";#1
           if errorlevel 1 exit /b 1
           cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc updater_main_fixed.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoUpdater.exe" shell32.lib dwmapi.lib user32.lib gdi32.lib
+          if errorlevel 1 exit /b 1
+          mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoUpdater.exe";#1
           if errorlevel 1 exit /b 1
           cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc ocr_parser_smoke_test.cpp ocr_parser.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\ocr_parser_smoke_test.exe"
           if errorlevel 1 exit /b 1
@@ -88,7 +101,8 @@ jobs:
           cmd.exe /d /c build-native.cmd
           if ($LASTEXITCODE -ne 0) { throw "compile failed: $LASTEXITCODE" }
           Copy-Item "$ortNative\*.dll" $out -Force
-      - name: Test and package
+
+      - name: Run v1.3.1 regressions and package
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -100,15 +114,37 @@ jobs:
           if ($LASTEXITCODE) { throw 'OCR inference regression failed' }
           & build-native\png_export_smoke_test.exe (Join-Path $PWD build-tests\export.png)
           if ($LASTEXITCODE) { throw 'PNG regression failed' }
-          $folder = 'artifact\鸣潮声骸计算器_v1.3.0_原生验证'
+
+          $generated = Get-Content native\app_v131.cpp -Raw
+          if (-not $generated.Contains('WICConvertBitmapSource')) { throw 'PNG conversion correction is missing' }
+          if (-not $generated.Contains('ocrRunning_=true;rows_={};rowConfidence_.fill(0)')) { throw 'OCR transient state correction is missing' }
+          if (-not $generated.Contains('selectedSlot_=0;status_=L"已清空全部记录"')) { throw 'Clear-all target reset is missing' }
+          if ($generated.Contains('1.3.0')) { throw 'Old version literal remains in v1.3.1 source' }
+
+          $folder = 'artifact\鸣潮声骸计算器_v1.3.1'
           New-Item -ItemType Directory -Force "$folder\models", "$folder\data", "$folder\updates" | Out-Null
-          Copy-Item build-native\WuwaEchoCalculatorNative.exe "$folder\鸣潮声骸计算器.exe"
+          Copy-Item build-native\WuwaEchoCalculator.exe "$folder\鸣潮声骸计算器.exe"
           Copy-Item build-native\WuwaEchoUpdater.exe "$folder\WuwaEchoUpdater.exe"
           Copy-Item build-native\onnxruntime*.dll $folder
           Copy-Item build-models\det.onnx,build-models\rec.onnx,build-models\dict.txt "$folder\models"
-          Compress-Archive -Path $folder -DestinationPath artifact\native-validation.zip -CompressionLevel Optimal
+          @'
+          鸣潮声骸计算器 v1.3.1
+
+          - 修复部分 Windows 环境导出 PNG 时的像素格式转换失败。
+          - 新图片开始识别时立即清空上一张图片的核对行，避免短暂显示手动状态。
+          - 清空全部记录后，记录位置回到声骸 1。
+          - 使用 Win32、Direct2D、DirectWrite、WIC、ONNX Runtime 与 PP-OCRv5。
+
+          请保留 models 目录、WuwaEchoUpdater.exe 和 ONNX Runtime DLL。
+          '@ | Set-Content "$folder\版本说明.txt" -Encoding UTF8
+          Compress-Archive -Path $folder -DestinationPath artifact\WuwaEchoCalculator-v1.3.1-windows-x64.zip -CompressionLevel Optimal
+          $hash = (Get-FileHash artifact\WuwaEchoCalculator-v1.3.1-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  WuwaEchoCalculator-v1.3.1-windows-x64.zip" | Set-Content artifact\WuwaEchoCalculator-v1.3.1-windows-x64.zip.sha256 -Encoding ASCII
+
       - uses: actions/upload-artifact@v4
         with:
-          name: native-validation-package
-          path: artifact/native-validation.zip
+          name: wuwa-echo-calculator-v1.3.1-validation
+          path: |
+            artifact/WuwaEchoCalculator-v1.3.1-windows-x64.zip
+            artifact/WuwaEchoCalculator-v1.3.1-windows-x64.zip.sha256
           retention-days: 7
