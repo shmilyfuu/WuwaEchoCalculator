@@ -78,6 +78,14 @@ jobs:
           if errorlevel 1 exit /b 1
           mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoUpdater.exe";#1
           if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /DWUWA_UI_PREVIEW /I"$ortInclude" build_entry.cpp ocr_build_entry.cpp ocr_parser.cpp update_manager.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoUiPreview.exe" /LIBPATH:"$ortNative" onnxruntime.lib d2d1.lib dwrite.lib windowscodecs.lib comdlg32.lib shell32.lib ole32.lib dwmapi.lib user32.lib gdi32.lib uuid.lib winhttp.lib bcrypt.lib
+          if errorlevel 1 exit /b 1
+          cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc /DWUWA_UI_PREVIEW updater_main.cpp "$out\app.res" /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:"$out\WuwaEchoUpdaterUiPreview.exe" shell32.lib dwmapi.lib user32.lib gdi32.lib
+          if errorlevel 1 exit /b 1
+          mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoUiPreview.exe";#1
+          if errorlevel 1 exit /b 1
+          mt.exe -nologo -manifest app.manifest -outputresource:"$out\WuwaEchoUpdaterUiPreview.exe";#1
+          if errorlevel 1 exit /b 1
           cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc ocr_parser_smoke_test.cpp ocr_parser.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\ocr_parser_smoke_test.exe"
           if errorlevel 1 exit /b 1
           cl.exe /nologo /utf-8 /std:c++17 /O2 /EHsc update_manager_smoke_test.cpp update_manager.cpp /link /SUBSYSTEM:CONSOLE /OUT:"$out\update_manager_smoke_test.exe" winhttp.lib bcrypt.lib
@@ -141,3 +149,14 @@ jobs:
             artifact/WuwaEchoCalculator-v1.3.1-windows-x64.zip.sha256
           if-no-files-found: error
           retention-days: 7
+
+      - name: Upload UI screenshot preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: wuwa-ui-screenshot-preview
+          path: |
+            build-native/WuwaEchoUiPreview.exe
+            build-native/WuwaEchoUpdaterUiPreview.exe
+            build-native/onnxruntime*.dll
+          if-no-files-found: error
+          retention-days: 3
