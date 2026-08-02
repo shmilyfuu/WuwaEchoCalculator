@@ -509,9 +509,9 @@ private:
             updateState_.phase = NativeUpdatePhase::Checking;
             statusLevel_ = StatusLevel::Attention;
             status_ = L"正在检查更新";
-        } else if (state == L"update-available" || state == L"update-available-long") {
+        } else if (state == L"update-available" || state == L"update-available-long" || state == L"update-available-long-bottom") {
             std::wstring notes=L"- 优化更新流程界面\n- 修复已知问题\n- 提升本地识别稳定性";
-            if(state==L"update-available-long"){
+            if(state==L"update-available-long"||state==L"update-available-long-bottom"){
                 notes=L"# 鸣潮声骸计算器 v1.3.3\n\n- 更新日志根据 Release 正文动态测量，不再使用固定高度。";
                 for(int line=1;line<=32;++line)notes+=L"\n- 滚动验证项目 "+std::to_wstring(line)+L"：长更新说明不会被静默裁切。";
                 notes+=L"\n- 完整说明最后一行应能通过滚动查看。";
@@ -519,7 +519,7 @@ private:
             updateState_.phase = NativeUpdatePhase::Available;
             updateState_.latest = {true,L"1.3.3",L"v1.3.3",L"鸣潮声骸计算器 v1.3.3",
                 notes,L"Gitee"};
-            updateNotesScroll_=0.0f;
+            updateNotesScroll_=state==L"update-available-long-bottom"?4096.0f:0.0f;
             modal_ = ModalKind::UpdateAvailable;
             statusLevel_ = StatusLevel::Attention;
             status_ = L"发现新版本 v1.3.3";
