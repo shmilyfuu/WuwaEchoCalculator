@@ -3,8 +3,8 @@
 101 ICON "app.ico"
 
 1 VERSIONINFO
-FILEVERSION 1,3,0,0
-PRODUCTVERSION 1,3,0,0
+FILEVERSION 1,3,1,0
+PRODUCTVERSION 1,3,1,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS VOS_NT_WINDOWS32
@@ -16,12 +16,12 @@ BEGIN
         BLOCK "080404b0"
         BEGIN
             VALUE "CompanyName", "WuwaEchoCalculator"
-            VALUE "FileDescription", "鸣潮声骸计算器 Direct2D 原生预览"
-            VALUE "FileVersion", "1.3.0-native"
-            VALUE "InternalName", "WuwaEchoCalculatorNative.exe"
-            VALUE "OriginalFilename", "鸣潮声骸计算器_原生预览.exe"
+            VALUE "FileDescription", "鸣潮声骸计算器"
+            VALUE "FileVersion", "1.3.1"
+            VALUE "InternalName", "WuwaEchoCalculator.exe"
+            VALUE "OriginalFilename", "鸣潮声骸计算器.exe"
             VALUE "ProductName", "鸣潮声骸计算器"
-            VALUE "ProductVersion", "1.3.0-native"
+            VALUE "ProductVersion", "1.3.1"
         END
     END
     BLOCK "VarFileInfo"
